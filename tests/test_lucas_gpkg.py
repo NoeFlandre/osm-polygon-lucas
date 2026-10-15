@@ -457,9 +457,7 @@ def test_layer_and_crs_faults_name_the_item_that_failed(tmp_path, options, item)
         results(path)
 
 
-def test_the_connection_reads_the_target_file_and_refuses_writes(
-    tmp_path, monkeypatch
-):
+def test_the_connection_reads_the_target_file_and_refuses_writes(tmp_path, monkeypatch):
     path = write_lucas_gpkg(tmp_path / "support.gpkg", [feature(1, SQUARE)])
     monkeypatch.chdir(tmp_path)
     original_connect = sqlite3.connect
