@@ -35,3 +35,4 @@ mutants/
 .work/
 .review-baseline/
 .claude/
+!/tools/

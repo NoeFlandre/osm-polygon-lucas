@@ -25,11 +25,85 @@ jobs:
           enable-cache: true
           python-version: "3.12"
       - run: uv sync --locked --all-groups
-      - run: uv run --locked pytest
-      - run: uv run --locked ruff check src tests
-      - run: uv run --locked ruff format --check src tests
-      - run: uv run --locked ty check src tests
+      - run: uv run --locked coverage run --branch --source=src/osm_polygon_lucas -m pytest
+      - run: uv run --locked ruff check src tests tools
+      - run: uv run --locked ruff format --check src tests tools
+      - run: uv run --locked ty check src tests tools
+      - name: Enforce the per-function CRAP limit
+        run: |
+          uv run --locked coverage json --pretty-print -o "$RUNNER_TEMP/coverage.json"
+          uv run --locked radon cc --json src/osm_polygon_lucas > "$RUNNER_TEMP/radon.json"
+          uv run --locked python tools/check_crap.py "$RUNNER_TEMP/coverage.json" "$RUNNER_TEMP/radon.json" --max-crap 6
       - run: uv run --locked mkdocs build --strict
       - run: uv build
       - name: Smoke-test the built wheel CLI
         run: uv run --isolated --no-project --with dist/*.whl lucas-cover --help
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the runtime image
+        run: docker build --tag osm-polygon-lucas:ci .
+      - name: Smoke-test the container CLI
+        run: docker run --rm osm-polygon-lucas:ci --help
+
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - name: Run the complete mutation suite
+        run: uv run --locked mutmut run --max-children 2
+      - name: Export and validate mutation evidence
+        run: |
+          uv run --locked mutmut export-cicd-stats
+          uv run --locked mutmut results --all true > mutation-results.txt
+          python - <<'PY'
+          import json
+          import re
+          from collections import Counter
+          from pathlib import Path
+
+          stats = json.loads(Path("mutants/mutmut-cicd-stats.json").read_text())
+          results = Path("mutation-results.txt").read_text()
+          pattern = re.compile(r"^\s*[\w.]+: (killed|survived|no tests|skipped|suspicious|timeout|segfault|caught by type check|check was interrupted by user|not checked)\s*$")
+          statuses = []
+          for line in results.splitlines():
+              if line.strip():
+                  match = pattern.fullmatch(line)
+                  if match is None:
+                      raise SystemExit(f"Unrecognized mutation result row: {line!r}")
+                  statuses.append(match.group(1))
+          counts = Counter(status.replace(" ", "_") for status in statuses)
+          if len(statuses) != stats.get("total"):
+              raise SystemExit(f"Mutation inventory mismatch: {len(statuses)} rows, stats total {stats.get('total')}")
+          for field in ("killed", "survived", "no_tests", "skipped", "suspicious", "timeout", "segfault", "caught_by_type_check"):
+              if counts[field] != stats.get(field, 0):
+                  raise SystemExit(f"Mutation {field} mismatch: rows={counts[field]}, stats={stats.get(field)}")
+          if counts["check_was_interrupted_by_user"] or stats.get("check_was_interrupted_by_user") != 0:
+              raise SystemExit("Mutation run was interrupted")
+          incomplete = {field: counts[field] for field in ("no_tests", "skipped", "suspicious", "timeout", "segfault", "caught_by_type_check", "not_checked") if counts[field]}
+          if incomplete:
+              raise SystemExit(f"Mutation run has incomplete/non-verdict outcomes: {incomplete}")
+          score = 100 * stats["killed"] / stats["total"] if stats["total"] else 0
+          print(f"Complete mutation inventory: {stats['total']} mutants; {stats['killed']} killed; {stats['survived']} survived; score={score:.2f}%.")
+          print("Survivors are retained as evidence for review; this job does not impose an unapproved zero-survivor threshold.")
+          PY
+      - name: Preserve mutation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-report-${{ github.run_id }}
+          path: |
+            mutants/mutmut-cicd-stats.json
+            mutants/src/osm_polygon_lucas/**
+            mutation-results.txt
+          if-no-files-found: warn
+          retention-days: 14

@@ -50,3 +50,7 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 [tool.ty.environment]
 python-version = "3.11"
 extra-paths = ["tests"]
+
+[tool.mutmut]
+source_paths = ["src/osm_polygon_lucas"]
+pytest_add_cli_args_test_selection = ["tests"]
