@@ -1,0 +1,156 @@
+{
+  "layer": "l2022_cop_radpoly_radqs_allatr_wcol",
+  "crs": "EPSG:3035",
+  "caller_supplied": {
+    "source_feature_id": "Supplied by the caller. No source ID column is assumed until uniqueness is verified."
+  },
+  "geometry": {
+    "role": "support_polygon",
+    "accepted_types": [
+      "Polygon",
+      "MultiPolygon"
+    ],
+    "requirements": [
+      "valid",
+      "positive_area"
+    ],
+    "metadata_geometry_type": "MULTISURFACE",
+    "source_crs": "EPSG:3035"
+  },
+  "fields_note": "Each fields[].name is the normalized lower-case key expected by the row parser. The source_storage_types object records the verified GeoPackage declarations; the loader must normalize text dates, GPS coordinates, and observation labels to the parser types.",
+  "fields": [
+    {
+      "name": "survey_year",
+      "type": "integer",
+      "role": "eligibility",
+      "rule": "equals 2022"
+    },
+    {
+      "name": "point_copernicus",
+      "type": "integer",
+      "role": "eligibility",
+      "rule": "equals 1"
+    },
+    {
+      "name": "surveycprncando",
+      "type": "integer",
+      "role": "eligibility",
+      "rule": "equals 1"
+    },
+    {
+      "name": "survey_obs_type",
+      "type": "integer",
+      "role": "eligibility",
+      "rule": "equals 1"
+    },
+    {
+      "name": "surveycprnlc",
+      "type": "string",
+      "role": "support_class",
+      "rule": "non-null raw class, used only through caller-supplied mappings"
+    },
+    {
+      "name": "survey_date",
+      "type": "date",
+      "role": "evidence",
+      "nullable": true,
+      "rule": "kept for every value, including 2023"
+    },
+    {
+      "name": "point_id",
+      "type": "string or integer",
+      "role": "evidence",
+      "rule": "LUCAS point identifier"
+    },
+    {
+      "name": "point_lat",
+      "type": "number",
+      "role": "target_coordinates",
+      "nullable": true
+    },
+    {
+      "name": "point_long",
+      "type": "number",
+      "role": "target_coordinates",
+      "nullable": true
+    },
+    {
+      "name": "survey_gps_lat",
+      "type": "number",
+      "role": "observer_gps",
+      "nullable": true
+    },
+    {
+      "name": "survey_gps_long",
+      "type": "number",
+      "role": "observer_gps",
+      "nullable": true
+    },
+    {
+      "name": "survey_lc1",
+      "type": "string",
+      "role": "point_core_label",
+      "nullable": true
+    },
+    {
+      "name": "survey_lc2",
+      "type": "string",
+      "role": "point_core_label",
+      "nullable": true
+    },
+    {
+      "name": "survey_lu1",
+      "type": "string",
+      "role": "point_core_label",
+      "nullable": true
+    },
+    {
+      "name": "survey_lu2",
+      "type": "string",
+      "role": "point_core_label",
+      "nullable": true
+    }
+  ],
+  "unverified": [
+    "point_id uniqueness is not assumed; the GeoPackage fid primary key identifies source features."
+  ],
+  "source_feature_id": "fid (INTEGER PRIMARY KEY)",
+  "source_storage_types": {
+    "fid": "INTEGER PRIMARY KEY",
+    "geom": "MULTISURFACE",
+    "point_id": "MEDIUMINT",
+    "point_lat": "REAL",
+    "point_long": "REAL",
+    "point_copernicus": "MEDIUMINT",
+    "survey_date": "TEXT(50)",
+    "survey_gps_lat": "TEXT(50)",
+    "survey_gps_long": "TEXT(50)",
+    "survey_obs_type": "TEXT(50)",
+    "survey_lc1": "TEXT(50)",
+    "survey_lc2": "TEXT(50)",
+    "survey_lu1": "TEXT(64)",
+    "survey_lu2": "TEXT(70)",
+    "survey_year": "MEDIUMINT",
+    "surveycprncando": "MEDIUMINT",
+    "surveycprnlc": "TEXT(50)"
+  },
+  "source_observation_crosswalk": {
+    "Field Survey, point visible <= 100 m": 1,
+    "Field Survey, point visible > 100 m": 2,
+    "Photo-interpretation in the field": 3
+  },
+  "verified_source_facts": {
+    "asset_sha256": "4d240c5710866f9549712685859a5051522b223f3e1fe580dcc9e398b68b037f",
+    "sqlite_integrity_check": "ok",
+    "feature_count": 137966,
+    "attribute_candidates_after_policy_filters": 126523,
+    "positive_area_polygonal_candidates": 126516,
+    "zero_area_candidates": 7,
+    "invalid_candidate_geometries": 0,
+    "observed_candidate_wkb_counts": {
+      "Polygon": 126522,
+      "MultiPolygon": 1
+    },
+    "spatial_index": "rtree_l2022_cop_radpoly_radqs_allatr_wcol_geom"
+  }
+}

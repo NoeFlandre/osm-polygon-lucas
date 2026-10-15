@@ -1,0 +1,13 @@
+site_name: LUCAS polygon coverage
+site_description: Coverage calculations for LUCAS 2022 Copernicus supports and OSM polygons.
+docs_dir: docs
+strict: true
+nav:
+  - Overview: index.md
+  - Decisions:
+      - Support coverage: adr/0001-lucas-support-coverage.md
+      - GeoPackage loader: adr/0002-lucas-gpkg-loader.md
+      - CLI report: adr/0003-cli-report.md
+  - Quality:
+      - Mutation environment: quality/mutation-environment.md
+      - Mutation triage: quality/mutation-triage.md

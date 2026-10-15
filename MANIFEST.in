@@ -1,0 +1,19 @@
+include README.md
+include pyproject.toml
+include uv.lock
+include mkdocs.yml
+include Dockerfile
+include .dockerignore
+include config/lucas-2022-source.json
+recursive-include docs *.md
+recursive-include src/osm_polygon_lucas *.py *.json
+recursive-include tests *.py *.json
+prune data/raw
+prune .work
+prune .review-baseline
+prune .claude
+prune .venv
+prune build
+prune dist
+prune mutants
+global-exclude .DS_Store *.py[cod]
