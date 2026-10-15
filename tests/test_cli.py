@@ -118,6 +118,7 @@ def test_cli_emits_deterministic_json_with_source_and_all_point_evidence(
 
 def test_cli_help_preserves_the_declared_command_and_option_descriptions():
     help_text = cli._argument_parser().format_help()
+    normalized_help = " ".join(help_text.split())
 
     assert help_text.startswith("usage: lucas-cover ")
     for phrase in (
@@ -127,7 +128,7 @@ def test_cli_help_preserves_the_declared_command_and_option_descriptions():
         "Path to the pinned LUCAS 2022 Copernicus GeoPackage.",
         "JSON output path, or '-' for stdout (default).",
     ):
-        assert phrase in help_text
+        assert phrase in normalized_help
 
 
 def test_source_manifest_uses_exact_package_and_resource_name(monkeypatch):
