@@ -28,7 +28,7 @@ Approved Policy B governs the calculator.
 5. Exactly one passing class is the winner. Two or more passing classes make the level `ambiguous` with no winner. No passing class gives no winner.
 6. Evidence keeps every touching support, including boundary-only contacts. It also keeps overlaps measured inside the OSM polygon, labelled `same_class`, `cross_class`, or `unmapped`, and the unmapped supports for each level.
 
-Taxonomy maps raw classes by exact code. The official C3 table contains 71 observed codes. Heading-only codes and unlisted values stay unmapped. The code never infers a label from a prefix.
+Taxonomy maps raw classes by exact code. The official C3 table contains 74 observed codes. Heading-only codes and unlisted values stay unmapped. The code never infers a label from a prefix.
 
 ## Caller usage
 

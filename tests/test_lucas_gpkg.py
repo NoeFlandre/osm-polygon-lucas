@@ -21,7 +21,6 @@ from osm_polygon_lucas.lucas_gpkg import _open_read_only
 
 SQUARE = box(0.0, 0.0, 1.0, 1.0)
 BOWTIE = Polygon([(0.0, 0.0), (2.0, 2.0), (2.0, 0.0), (0.0, 2.0)])
-MANIFEST = Path(__file__).resolve().parents[1] / "config" / "lucas-2022-source.json"
 
 
 def results(path: Path, **options: Any) -> list[EligibleSupport | Rejection]:
@@ -528,8 +527,10 @@ def test_a_later_bad_row_does_not_stop_the_earlier_results(tmp_path):
 
 def test_manifest_observation_strings_are_eligible_only_for_code_one(
     tmp_path,
+    pytestconfig,
 ):
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest_path = pytestconfig.rootpath / "config" / "lucas-2022-source.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     crosswalk = manifest["source_verification"][
         "observed_survey_obs_type_to_official_code"
     ]

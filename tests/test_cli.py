@@ -325,6 +325,28 @@ def test_cli_writes_report_to_requested_path(tmp_path, capsys):
     assert payload["schema"] == "lucas_polygon_coverage.v1"
 
 
+def test_cli_reports_output_write_errors_as_usage_errors(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "_report_text", lambda args: "{}\n")
+    output_path = tmp_path / "missing" / "coverage.json"
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "--osm-wkt",
+                "unused.wkt",
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                "unused.gpkg",
+                "--output",
+                str(output_path),
+            ]
+        )
+
+    assert error.value.code == 2
+    assert "No such file or directory" in capsys.readouterr().err
+
+
 def test_cli_rejects_non_finite_evidence_instead_of_emitting_invalid_json(
     tmp_path, capsys
 ):

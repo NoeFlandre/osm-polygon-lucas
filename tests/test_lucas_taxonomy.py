@@ -31,7 +31,13 @@ OFFICIAL_C3 = {
     "D00": {"D10": ("D10",), "D20": ("D20",)},
     "E00": {"E10": ("E10",), "E20": ("E20",), "E30": ("E30",)},
     "F00": {"F10": ("F10",), "F20": ("F20",), "F30": ("F30",), "F40": ("F40",)},
-    "G00": {"G10": ("G11",), "G20": ("G21", "G22"), "G40": ("G40",)},
+    "G00": {
+        "G10": ("G11", "G12"),
+        "G20": ("G21", "G22"),
+        "G30": ("G30",),
+        "G40": ("G40",),
+        "G50": ("G50",),
+    },
     "H00": {"H10": ("H11", "H12"), "H20": ("H21", "H22", "H23")},
 }
 
@@ -51,7 +57,7 @@ def test_levels_are_main_category_then_second_level_then_observed_code():
     ]
 
 
-def test_each_level_is_keyed_on_exactly_the_71_official_observed_codes():
+def test_each_level_is_keyed_on_exactly_the_74_official_observed_codes():
     observed = {
         code
         for groups in OFFICIAL_C3.values()
@@ -59,10 +65,31 @@ def test_each_level_is_keyed_on_exactly_the_71_official_observed_codes():
         for code in codes
     }
 
-    assert len(observed) == 71
+    assert len(observed) == 74
     assert len(LUCAS_C3_LEVELS) == 3
     for level in LUCAS_C3_LEVELS:
         assert set(level.labels) == observed, level.name
+
+
+@pytest.mark.parametrize(
+    ("raw_class", "expected_labels"),
+    [
+        ("G12", ("G00", "G10", "G12")),
+        ("G30", ("G00", "G30", "G30")),
+        ("G50", ("G00", "G50", "G50")),
+    ],
+)
+def test_official_water_classes_map_at_every_level(
+    make_support,
+    raw_class,
+    expected_labels,
+):
+    support = make_support("f1", raw_class, OSM)
+
+    result = assess_osm_polygon(OSM, [support], LUCAS_C3_LEVELS)
+
+    assert [level.winner for level in result.levels] == list(expected_labels)
+    assert [level.unmapped_feature_ids for level in result.levels] == [(), (), ()]
 
 
 def test_every_observed_code_maps_to_its_official_parents_at_each_level():

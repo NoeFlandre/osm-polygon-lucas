@@ -42,9 +42,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         output = _report_text(args)
+        _write_output(args.output, output)
     except (OSError, ValueError, ShapelyError) as exc:
         parser.error(str(exc))
-    _write_output(args.output, output)
     return 0
 
 
