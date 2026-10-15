@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 
 import pytest
 from shapely.geometry.base import BaseGeometry
@@ -7,6 +8,15 @@ from shapely.geometry.base import BaseGeometry
 from osm_polygon_lucas import EligibleSupport, classify_support_row
 
 MakeSupport = Callable[..., EligibleSupport]
+
+
+@pytest.fixture
+def repository_root(pytestconfig) -> Path:
+    for candidate in (pytestconfig.rootpath, *pytestconfig.rootpath.parents):
+        root = Path(candidate)
+        if (root / "config" / "lucas-2022-source.json").is_file():
+            return root
+    pytest.fail("could not find the repository source manifest")
 
 
 @pytest.fixture

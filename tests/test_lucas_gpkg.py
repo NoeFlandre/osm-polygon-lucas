@@ -527,9 +527,9 @@ def test_a_later_bad_row_does_not_stop_the_earlier_results(tmp_path):
 
 def test_manifest_observation_strings_are_eligible_only_for_code_one(
     tmp_path,
-    pytestconfig,
+    repository_root,
 ):
-    manifest_path = pytestconfig.rootpath / "config" / "lucas-2022-source.json"
+    manifest_path = repository_root / "config" / "lucas-2022-source.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     crosswalk = manifest["source_verification"][
         "observed_survey_obs_type_to_official_code"
