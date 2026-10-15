@@ -55,3 +55,5 @@ extra-paths = ["tests"]
 source_paths = ["src/osm_polygon_lucas"]
 pytest_add_cli_args_test_selection = ["tests"]
 also_copy = ["tools/"]
+# Mutmut injects trampoline imports; architecture is checked against unmutated source in QA.
+pytest_add_cli_args = ["--ignore=tests/test_architecture.py"]
