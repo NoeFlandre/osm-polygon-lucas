@@ -1,6 +1,31 @@
 # GeoPackage loader mutation triage
 
-## Run and current status
+## Current hosted mutation survivors
+
+The mutation job compares every surviving mutant ID against this table. An undocumented, stale, or duplicate ID fails the job. Each listed case has a behavior-equivalence or domain-based rationale.
+
+| Mutant ID | Reason |
+| --- | --- |
+| `osm_polygon_lucas.cli.x__report_text__mutmut_30` | `None` and `False` are both falsey. `json.dumps` rejects non-finite numbers in either case. |
+| `osm_polygon_lucas.cli.x__read_osm_wkt__mutmut_10` | Python resolves `UTF-8` and `utf-8` to the same codec. |
+| `osm_polygon_lucas.cli.x__source_manifest__mutmut_11` | Python resolves `UTF-8` and `utf-8` to the same codec. |
+| `osm_polygon_lucas.cli.x__write_output__mutmut_10` | Python resolves `UTF-8` and `utf-8` to the same codec. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_layer__mutmut_12` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_layer__mutmut_13` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_layer__mutmut_38` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_layer__mutmut_39` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_layer__mutmut_41` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_crs__mutmut_11` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_crs__mutmut_12` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_crs__mutmut_14` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_crs__mutmut_15` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__check_rtree__mutmut_10` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__select_rows__mutmut_10` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__select_rows__mutmut_13` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
+| `osm_polygon_lucas.lucas_gpkg.x__wkb_order__mutmut_14` | For supported WKB types 1-7, byte 1 is nonzero for little-endian and zero for big-endian, so this test selects the same byte order as the marker at byte 0. |
+| `osm_polygon_lucas.support_eligibility.x_classify_support_row__mutmut_67` | A non-string support class adds a rejection reason, and a missing polygon adds a geometry reason. The final type and polygon checks cannot change the result after those checks. |
+
+## Historical preserved run status
 
 The preserved mutation run for `src/osm_polygon_lucas/lucas_gpkg.py` generated 406 mutants: 368 were killed and 38 survived. Its raw status metadata and log are local-only scratch artifacts and are not included in this repository. The implementation code was unchanged when the diagnostic regression tests below were added.
 
@@ -12,7 +37,7 @@ A fresh disposable `/tmp` workspace mutated only `src/osm_polygon_lucas/cli.py` 
 
 The survivors were reviewed by category. Strict-zip changes in support-evidence and class-grouping loops are equivalent because both paired sequences are built from the same supports. Geometry-validator survivors change diagnostic wording only; the area-predicate mutation is killed by a positive polygon smaller than one square unit. CLI survivors change help or diagnostic text, JSON formatting, UTF-8 spelling/defaults for the ASCII JSON payload, or an equivalent falsey `allow_nan` setting. Tests cover the behavior-sensitive cases: bounded RTree selection, CRS and required arguments, null dates, unmapped labels, sub-square-unit overlap evidence, and rejection of non-finite JSON values. The source-manifest test asserts the exact package and case-sensitive resource name independently of the host filesystem.
 
-## Behavior-equivalent survivors
+## Historical behavior-equivalent survivors
 
 “Equivalent” here means no change to acceptance, rejection, or decoded values for inputs supported by the loader contract. Error class and feature/item identification remain intact; wording that describes the internal rejection stage is not part of that contract.
 
@@ -25,7 +50,7 @@ The survivors were reviewed by category. Strict-zip changes in support-evidence 
 | `_normalize_row`: 5, 8, 9 | These alter the strict zip behavior. `_select_rows` selects exactly `fid`, `geom`, and `REQUIRED_KEYS`; the unpacked `values` therefore always have the same length as `REQUIRED_KEYS`. |
 | `_check_signature`: 9 | The magic-byte error displays one extra byte. Its predicate and all acceptance/rejection behavior are unchanged. |
 
-## Diagnostic survivors now covered
+## Historical diagnostic survivors now covered
 
 | Mutants | Permanent assertion |
 | --- | --- |
@@ -38,7 +63,7 @@ The survivors were reviewed by category. Strict-zip changes in support-evidence 
 
 The corresponding tests are `test_invalid_bounds_keep_actionable_diagnostics`, `test_missing_file_error_includes_the_requested_path`, `test_sqlite_open_error_keeps_path_and_cause`, `test_sqlite_scan_error_keeps_path_and_cause`, `test_missing_metadata_rows_name_the_expected_item`, `test_bad_version_diagnostic_reports_the_version_byte`, and `test_bad_wkb_byte_order_diagnostic_reports_the_offending_byte`.
 
-## Verification after triage tests
+## Historical verification after triage tests
 
 - Full synthetic suite: 199 passed on repeat runs, including a run with `PYTHONHASHSEED=20261015`.
 - Line and branch coverage: 100% across the five implementation modules; the separate `__main__` wrapper is not included in that figure.

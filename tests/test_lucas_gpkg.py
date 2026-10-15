@@ -462,8 +462,17 @@ def test_the_connection_reads_the_target_file_and_refuses_writes(
 ):
     path = write_lucas_gpkg(tmp_path / "support.gpkg", [feature(1, SQUARE)])
     monkeypatch.chdir(tmp_path)
+    original_connect = sqlite3.connect
+    uri_arguments = []
+
+    def connect(database, *args, **kwargs):
+        uri_arguments.append(kwargs.get("uri"))
+        return original_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
     conn = _open_read_only(path)
     try:
+        assert uri_arguments == [True]
         assert conn.execute(f'SELECT COUNT(*) FROM "{LAYER}"').fetchone() == (1,)
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
             conn.execute("CREATE TABLE scratch (x INTEGER)")

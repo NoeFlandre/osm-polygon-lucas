@@ -114,3 +114,29 @@ jobs:
           while IFS= read -r mutant; do
             uv run --locked mutmut show "$mutant"
           done
+      - name: Require triage for every mutation survivor
+        run: |
+          uv run --locked python - <<'PY'
+          import re
+          from pathlib import Path
+
+          result_lines = Path("mutation-results.txt").read_text(encoding="utf-8").splitlines()
+          survivor_pattern = re.compile(r"^\s*([\w.]+): survived\s*$")
+          survivor_ids = []
+          for line in result_lines:
+              match = survivor_pattern.fullmatch(line)
+              if match is not None:
+                  survivor_ids.append(match.group(1))
+
+          triage = Path("docs/quality/mutation-triage.md").read_text(encoding="utf-8")
+          triaged_ids = re.findall(r"^\| `([\w.]+)` \|", triage, flags=re.MULTILINE)
+          if len(triaged_ids) != len(set(triaged_ids)):
+              raise SystemExit("Mutation triage contains duplicate mutant IDs")
+          untriaged = sorted(set(survivor_ids) - set(triaged_ids))
+          stale = sorted(set(triaged_ids) - set(survivor_ids))
+          if untriaged or stale:
+              raise SystemExit(
+                  f"Mutation triage mismatch: untriaged={untriaged}, stale={stale}"
+              )
+          print(f"Triaged all {len(survivor_ids)} surviving mutant IDs.")
+          PY
