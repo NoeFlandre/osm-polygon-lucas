@@ -106,5 +106,11 @@ jobs:
           score = 100 * stats["killed"] / stats["total"]
           print(f"Complete mutation inventory: {stats['total']} mutants; {stats['killed']} killed; {stats['survived']} survived; score={score:.2f}%.")
           print("Mutant outcomes are validated within the job; no mutation report artifact is uploaded.")
-          print("No zero-survivor or mutation-score threshold is applied.")
           PY
+      - name: Show surviving mutant diffs for triage
+        shell: bash
+        run: |
+          awk '$2 == "survived" { sub(/:$/, "", $1); print $1 }' mutation-results.txt |
+          while IFS= read -r mutant; do
+            uv run --locked mutmut show "$mutant"
+          done
