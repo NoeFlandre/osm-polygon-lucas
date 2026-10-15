@@ -1,6 +1,7 @@
 import hashlib
 import json
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -37,6 +38,17 @@ def test_cli_emits_deterministic_json_with_source_and_all_point_evidence(
     first = capsys.readouterr().out
     payload = json.loads(first)
 
+    assert list(payload) == [
+        "input",
+        "levels",
+        "policy",
+        "schema",
+        "source",
+        "source_selection",
+        "supports",
+    ]
+    assert first.startswith('{\n  "input": {\n')
+    assert first.endswith("}\n")
     assert payload["schema"] == "lucas_polygon_coverage.v1"
     assert payload["input"] == {
         "osm_crs": "EPSG:3035",
@@ -104,10 +116,26 @@ def test_cli_emits_deterministic_json_with_source_and_all_point_evidence(
     ]
 
 
+def test_cli_help_preserves_the_declared_command_and_option_descriptions():
+    help_text = cli._argument_parser().format_help()
+
+    assert help_text.startswith("usage: lucas-cover ")
+    for phrase in (
+        "Measure LUCAS 2022 class coverage for one EPSG:3035 OSM polygon.",
+        "UTF-8 WKT file containing one polygon, or '-' to read stdin.",
+        "CRS of the supplied WKT. The LUCAS source uses EPSG:3035.",
+        "Path to the pinned LUCAS 2022 Copernicus GeoPackage.",
+        "JSON output path, or '-' for stdout (default).",
+    ):
+        assert phrase in help_text
+
+
 def test_source_manifest_uses_exact_package_and_resource_name(monkeypatch):
+    source = '{"asset":"café"}'.encode("utf-8")
+
     class Resource:
         def read_text(self, encoding=None):
-            return '{"asset":"fixture"}'
+            return source.decode(encoding or "ascii")
 
     class Package:
         def joinpath(self, name):
@@ -120,7 +148,37 @@ def test_source_manifest_uses_exact_package_and_resource_name(monkeypatch):
 
     monkeypatch.setattr(cli, "files", fake_files)
 
-    assert cli._source_manifest() == {"asset": "fixture"}
+    assert cli._source_manifest() == {"asset": "café"}
+
+
+def test_empty_wkt_error_is_specific(tmp_path):
+    wkt_path = tmp_path / "empty.wkt"
+    wkt_path.write_bytes(b" \n")
+
+    with pytest.raises(ValueError) as error:
+        cli._read_osm_wkt(str(wkt_path))
+
+    assert str(error.value) == "OSM WKT input is empty"
+
+
+def test_output_file_is_utf8_with_an_ascii_default_encoding(tmp_path, monkeypatch):
+    output_path = tmp_path / "coverage.json"
+    original_path = cli.Path
+
+    class AsciiDefaultPath:
+        def __init__(self, value):
+            self.path = original_path(value)
+
+        def write_text(self, text, encoding=None):
+            encoded = text.encode(encoding or "ascii")
+            return self.path.write_bytes(encoded)
+
+    monkeypatch.setattr(cli, "Path", AsciiDefaultPath)
+    output = '{"label":"漢字"}\n'
+
+    cli._write_output(str(output_path), output)
+
+    assert output_path.read_bytes() == output.encode("utf-8")
 
 
 def test_cli_requires_wkt_crs_and_geopackage_arguments(tmp_path):

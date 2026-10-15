@@ -17,7 +17,13 @@ from osm_polygon_lucas import (
     RejectionReason,
     iter_lucas_2022_supports,
 )
-from osm_polygon_lucas.lucas_gpkg import _open_read_only
+from osm_polygon_lucas.lucas_gpkg import (
+    _check_signature,
+    _normalize_row,
+    _open_read_only,
+    _wkb_start,
+)
+from osm_polygon_lucas.support_eligibility import REQUIRED_KEYS
 
 SQUARE = box(0.0, 0.0, 1.0, 1.0)
 BOWTIE = Polygon([(0.0, 0.0), (2.0, 2.0), (2.0, 0.0), (0.0, 2.0)])
@@ -316,6 +322,41 @@ def test_header_faults_raise_value_error_naming_the_fid(tmp_path, blob):
         results(path)
 
 
+def test_eight_byte_geopackage_header_is_complete():
+    header = b"GP\x00\x01" + (3035).to_bytes(4, "little", signed=True)
+
+    _check_signature(7, header)
+
+    assert _wkb_start(7, header) == 8
+
+
+def test_invalid_geopackage_magic_diagnostic_shows_the_two_byte_magic():
+    blob = b"XY\x00\x01" + (3035).to_bytes(4, "little", signed=True)
+
+    with pytest.raises(ValueError) as error:
+        _check_signature(7, blob)
+
+    assert str(error.value) == "fid 7: GeoPackage magic b'XY' is not b'GP'"
+
+
+def test_negative_geopackage_srs_id_is_read_as_signed():
+    blob = b"GP\x00\x01" + (-1).to_bytes(4, "little", signed=True)
+
+    with pytest.raises(ValueError) as error:
+        _wkb_start(7, blob)
+
+    assert str(error.value) == "fid 7: GeoPackage srs_id -1 is not 3035"
+
+
+def test_row_normalization_rejects_more_values_than_schema_fields():
+    values = (*([None] * len(REQUIRED_KEYS)), "unexpected column")
+
+    with pytest.raises(
+        ValueError, match=r"zip\(\) argument 2 is longer than argument 1"
+    ):
+        _normalize_row(7, values)
+
+
 def test_a_non_blob_geometry_raises_naming_the_fid(tmp_path):
     path = write_lucas_gpkg(tmp_path / "support.gpkg", [feature(9, "not a blob")])
 
@@ -416,10 +457,14 @@ def test_layer_and_crs_faults_name_the_item_that_failed(tmp_path, options, item)
         results(path)
 
 
-def test_the_connection_refuses_writes(tmp_path):
+def test_the_connection_reads_the_target_file_and_refuses_writes(
+    tmp_path, monkeypatch
+):
     path = write_lucas_gpkg(tmp_path / "support.gpkg", [feature(1, SQUARE)])
+    monkeypatch.chdir(tmp_path)
     conn = _open_read_only(path)
     try:
+        assert conn.execute(f'SELECT COUNT(*) FROM "{LAYER}"').fetchone() == (1,)
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
             conn.execute("CREATE TABLE scratch (x INTEGER)")
     finally:

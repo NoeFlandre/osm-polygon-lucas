@@ -49,6 +49,23 @@ def test_derive_levels_rejects_an_observed_code_listed_twice():
         _derive_levels(rows)
 
 
+def test_derive_levels_builds_named_parent_maps_from_rows():
+    rows = (("A00", "A10", ("A11", "A12")), ("B00", "B10", ("B11",)))
+
+    levels = _derive_levels(rows)
+
+    assert [level.name for level in levels] == [
+        "main_category",
+        "second_level",
+        "observed_code",
+    ]
+    assert [dict(level.labels) for level in levels] == [
+        {"A11": "A00", "A12": "A00", "B11": "B00"},
+        {"A11": "A10", "A12": "A10", "B11": "B10"},
+        {"A11": "A11", "A12": "A12", "B11": "B11"},
+    ]
+
+
 def test_levels_are_main_category_then_second_level_then_observed_code():
     assert [level.name for level in LUCAS_C3_LEVELS] == [
         "main_category",

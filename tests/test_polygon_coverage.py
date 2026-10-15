@@ -15,6 +15,7 @@ from osm_polygon_lucas import (
     assess_osm_polygon,
     validate_osm_polygon,
 )
+from osm_polygon_lucas.polygon_coverage import _group_by_label, _support_evidence
 
 OSM = box(0.0, 0.0, 10.0, 10.0)
 COVER = TaxonomyLevel(name="cover", labels={"B11": "Cropland", "C10": "Woodland"})
@@ -354,24 +355,44 @@ def test_support_evidence_keeps_feature_point_class_date_and_intersection_area(
     )
 
 
+def test_support_evidence_rejects_mismatched_parallel_inputs(make_support):
+    support = make_support("f1", "B11", box(0.0, 0.0, 1.0, 1.0))
+
+    with pytest.raises(ValueError):
+        _support_evidence([support], [])
+
+
+def test_label_grouping_rejects_mismatched_parallel_inputs(make_support):
+    support = make_support("f1", "B11", box(0.0, 0.0, 1.0, 1.0))
+
+    with pytest.raises(ValueError):
+        _group_by_label([support], [])
+
+
 @pytest.mark.parametrize(
     ("osm", "message"),
     [
         (
             Polygon([(0.0, 0.0), (10.0, 10.0), (10.0, 0.0), (0.0, 10.0)]),
-            "must be valid",
+            "OSM polygon must be valid",
         ),
         (
             LineString([(0.0, 0.0), (10.0, 10.0)]),
-            "must be a Polygon or MultiPolygon",
+            "OSM geometry must be a Polygon or MultiPolygon",
         ),
-        (Polygon(), "must have positive area"),
+        (Polygon(), "OSM polygon must have positive area"),
+        (
+            Polygon([(0.0, 0.0), (1e200, 0.0), (1e200, 1e200), (0.0, 1e200)]),
+            "OSM polygon area must be finite",
+        ),
     ],
-    ids=["self_intersecting", "not_polygonal", "zero_area"],
+    ids=["self_intersecting", "not_polygonal", "zero_area", "infinite_area"],
 )
 def test_osm_polygon_must_be_polygonal_valid_and_positive_area(osm, message):
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError) as error:
         assess_osm_polygon(osm, [], [COVER])
+
+    assert str(error.value) == message
 
 
 def test_valid_osm_polygon_may_have_less_than_one_square_unit_of_area():

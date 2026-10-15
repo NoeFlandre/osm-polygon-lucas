@@ -131,12 +131,23 @@ def test_every_schema_field_is_required(base_row, key):
         classify_support_row("feature-1", row, SQUARE)
 
 
-@pytest.mark.parametrize("value", ["2023-02-14", datetime(2023, 2, 14)])
-def test_survey_date_must_arrive_as_a_date(base_row, value):
+@pytest.mark.parametrize(
+    ("value", "expected_message"),
+    [
+        ("2023-02-14", "survey_date must be a date or None, not str"),
+        (
+            datetime(2023, 2, 14),
+            "survey_date must be a date or None, not datetime",
+        ),
+    ],
+)
+def test_survey_date_must_arrive_as_a_date(base_row, value, expected_message):
     row = {**base_row, "survey_date": value}
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError) as error:
         classify_support_row("feature-1", row, SQUARE)
+
+    assert str(error.value) == expected_message
 
 
 def test_null_date_and_coordinates_are_kept_as_none_not_rejected(base_row):
@@ -154,21 +165,42 @@ def test_null_date_and_coordinates_are_kept_as_none_not_rejected(base_row):
     assert support.observer_gps == Coordinates(lat=None, long=12.75)
 
 
+def test_non_null_secondary_core_labels_are_preserved(base_row):
+    row = {**base_row, "survey_lc2": "B12", "survey_lu2": "U112"}
+
+    support = eligible(classify_support_row("feature-1", row, SQUARE))
+
+    assert support.core_labels.survey_lc2 == "B12"
+    assert support.core_labels.survey_lu2 == "U112"
+
+
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("field", "value", "expected_message"),
     [
-        ("point_id", 1.5),
-        ("point_lat", "45.5"),
-        ("survey_gps_long", "12.75"),
-        ("survey_lc1", 3),
-        ("surveycprnlc", 10),
+        (
+            "point_id",
+            1.5,
+            "point_id must be a string or an integer, not float",
+        ),
+        ("point_lat", "45.5", "coordinate must be a number or None, not str"),
+        (
+            "survey_gps_long",
+            "12.75",
+            "coordinate must be a number or None, not str",
+        ),
+        ("survey_lc1", 3, "label must be a string or None, not int"),
+        ("surveycprnlc", 10, "label must be a string or None, not int"),
     ],
 )
-def test_carried_fields_of_the_wrong_type_raise(base_row, field, value):
+def test_carried_fields_of_the_wrong_type_raise(
+    base_row, field, value, expected_message
+):
     row = {**base_row, field: value}
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError) as error:
         classify_support_row("feature-1", row, SQUARE)
+
+    assert str(error.value) == expected_message
 
 
 def test_schema_fixture_lists_exactly_the_fields_the_parser_reads(base_row):
