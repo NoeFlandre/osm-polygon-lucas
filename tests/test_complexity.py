@@ -20,7 +20,7 @@ def test_every_production_function_is_within_max_complexity():
         f"{path.name}:{block.lineno} {block.name} CC {block.complexity}"
         for path in sorted(PACKAGE_DIR.glob("*.py"))
         for block in function_blocks(path.read_text(encoding="utf-8"))
-        if block.complexity > MAX_COMPLEXITY
+        if block.complexity > MAX_COMPLEXITY and "__mutmut_" not in block.name
     ]
 
     assert over == []
