@@ -241,10 +241,28 @@ def test_output_allows_a_distinct_existing_target(tmp_path):
     assert output_path.read_text(encoding="utf-8") == "new report"
 
 
-def test_output_file_skips_standard_input_in_protected_paths(tmp_path):
-    output_path = tmp_path / "coverage.json"
+def test_output_file_checks_sources_after_standard_input_marker(tmp_path):
+    input_path = tmp_path / "synthetic.gpkg"
+    input_path.write_bytes(b"GeoPackage")
+    original = input_path.read_bytes()
 
-    cli._write_output(str(output_path), "report", protected_paths=("-",))
+    with pytest.raises(ValueError, match="would overwrite input file"):
+        cli._write_output(
+            str(input_path),
+            "report",
+            protected_paths=("-", str(input_path)),
+        )
+
+    assert input_path.read_bytes() == original
+
+
+def test_output_path_named_dash_is_allowed_when_stdin_is_an_input(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    output_path = tmp_path / "-"
+
+    cli._write_output("./-", "report", protected_paths=("-",))
 
     assert output_path.read_text(encoding="utf-8") == "report"
 

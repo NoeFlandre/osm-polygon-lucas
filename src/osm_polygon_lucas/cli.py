@@ -227,9 +227,7 @@ def _level_record(level: LevelDecision) -> dict[str, Any]:
     }
 
 
-def _write_output(
-    path: str, text: str, *, protected_paths: Sequence[str] = ()
-) -> None:
+def _write_output(path: str, text: str, *, protected_paths: Sequence[str] = ()) -> None:
     if path == "-":
         sys.stdout.write(text)
     else:
