@@ -343,7 +343,7 @@ def test_temporary_directory_uses_destination_parent(tmp_path):
         temporary_directory.rmdir()
 
 
-def test_temporary_directory_uses_a_hidden_name(tmp_path, monkeypatch):
+def test_temporary_directory_uses_a_dot_prefixed_name(tmp_path, monkeypatch):
     output_path = tmp_path / "coverage.json"
     prefixes = []
     original_mkdtemp = cli.tempfile.mkdtemp
