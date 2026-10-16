@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from lucas_gpkg_builder import feature, write_lucas_gpkg
