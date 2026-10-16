@@ -1,7 +1,7 @@
 import hashlib
 import json
 import os
-from io import BytesIO
+from io import BytesIO, StringIO
 from types import SimpleNamespace
 
 import pytest
@@ -284,6 +284,48 @@ def test_temporary_output_creation_failure_cleans_partial_state(
     assert not list(tmp_path.glob(".lucas-cover-*"))
 
 
+def test_temporary_output_cleanup_tolerates_a_missing_report_path(
+    tmp_path, monkeypatch
+):
+    original_stat = cli.Path.stat
+
+    def open_without_creating_path(path, *args, **kwargs):
+        return StringIO()
+
+    def failing_stat(path, *args, **kwargs):
+        if path.name == "report":
+            raise OSError("injected stat failure with missing report path")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli.Path, "open", open_without_creating_path)
+    monkeypatch.setattr(cli.Path, "stat", failing_stat)
+
+    with pytest.raises(OSError, match="injected stat failure with missing report path"):
+        cli._create_temporary_output(tmp_path / "coverage.json")
+
+    assert not list(tmp_path.glob(".lucas-cover-*"))
+
+
+def test_temporary_output_is_writable_before_report_write(tmp_path, monkeypatch):
+    temporary_path = tmp_path / "report"
+    temporary_file = temporary_path.open("x", encoding="utf-8")
+    chmod_modes = []
+    original_chmod = cli.Path.chmod
+
+    def recording_chmod(path, mode, *args, **kwargs):
+        chmod_modes.append(mode)
+        return original_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(cli.Path, "chmod", recording_chmod)
+
+    cli._write_temporary_output(
+        temporary_path, temporary_file, "new report", output_mode=0o640
+    )
+
+    assert chmod_modes == [0o600, 0o640]
+    assert temporary_path.read_text(encoding="utf-8") == "new report"
+
+
 def test_temporary_directory_uses_destination_parent(tmp_path):
     destination_parent = tmp_path / "output"
     destination_parent.mkdir()
@@ -299,6 +341,22 @@ def test_temporary_directory_uses_destination_parent(tmp_path):
         temporary_file.close()
         temporary_path.unlink(missing_ok=True)
         temporary_directory.rmdir()
+
+
+def test_temporary_directory_uses_a_hidden_name(tmp_path, monkeypatch):
+    output_path = tmp_path / "coverage.json"
+    prefixes = []
+    original_mkdtemp = cli.tempfile.mkdtemp
+
+    def recording_mkdtemp(*, prefix, dir):
+        prefixes.append(prefix)
+        return original_mkdtemp(prefix=prefix, dir=dir)
+
+    monkeypatch.setattr(cli.tempfile, "mkdtemp", recording_mkdtemp)
+    temporary_directory = cli._create_temporary_directory(output_path)
+    temporary_directory.rmdir()
+
+    assert prefixes[0].startswith(".")
 
 
 def test_case_insensitive_temporary_directory_collision_is_cleaned(
@@ -323,9 +381,10 @@ def test_case_insensitive_temporary_directory_collision_is_cleaned(
     monkeypatch.setattr(cli.tempfile, "mkdtemp", create_temporary_directory)
     monkeypatch.setattr(cli.Path, "samefile", case_insensitive_samefile)
 
-    with pytest.raises(FileExistsError, match="collide with output path"):
+    with pytest.raises(FileExistsError) as error:
         cli._create_temporary_directory(output_path)
 
+    assert str(error.value) == "temporary directory would collide with output path"
     assert not temporary_path.exists()
     assert not output_path.exists()
 
@@ -563,7 +622,7 @@ def test_cli_reports_an_output_symlink_loop_without_a_traceback(tmp_path, capsys
     assert error.value.code == 2
     stderr = capsys.readouterr().err
     assert "error:" in stderr
-    assert "output path contains a symlink loop" in stderr
+    assert stderr.endswith("error: output path contains a symlink loop\n")
     assert "Traceback" not in stderr
 
 

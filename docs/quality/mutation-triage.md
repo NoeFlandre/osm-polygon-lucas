@@ -9,7 +9,7 @@ The mutation job compares every surviving mutant ID against this table. An undoc
 | `osm_polygon_lucas.cli.x__report_text__mutmut_30` | `None` and `False` are both falsey. `json.dumps` rejects non-finite numbers in either case. |
 | `osm_polygon_lucas.cli.x__read_osm_wkt__mutmut_10` | Python resolves `UTF-8` and `utf-8` to the same codec. |
 | `osm_polygon_lucas.cli.x__source_manifest__mutmut_11` | Python resolves `UTF-8` and `utf-8` to the same codec. |
-| `osm_polygon_lucas.cli.x__write_output__mutmut_21` | Python resolves `UTF-8` and `utf-8` to the same codec. |
+| `osm_polygon_lucas.cli.x__create_temporary_directory__mutmut_8` | The uppercase prefix still keeps the temporary directory hidden, unique, and beneath the output parent; prefix case does not affect collision checking, cleanup, or report behavior. |
 | `osm_polygon_lucas.lucas_gpkg.x__check_layer__mutmut_12` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
 | `osm_polygon_lucas.lucas_gpkg.x__check_layer__mutmut_13` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
 | `osm_polygon_lucas.lucas_gpkg.x__check_layer__mutmut_38` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
