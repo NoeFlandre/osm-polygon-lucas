@@ -3,16 +3,13 @@
 import argparse
 import hashlib
 import json
-import os
-import secrets
-import stat
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import shapely
 from shapely.errors import ShapelyError
@@ -260,56 +257,52 @@ def _resolved_output_path(path: str) -> Path:
 
 def _write_output_atomically(output_path: Path, text: str) -> None:
     output_mode = _existing_output_mode(output_path)
-    temporary_path, temporary_fd, creation_mode = _create_temporary_output(output_path)
+    temporary_path, temporary_file, creation_mode = _create_temporary_output(
+        output_path
+    )
     try:
         _write_temporary_output(
             temporary_path,
-            temporary_fd,
+            temporary_file,
             text,
             creation_mode if output_mode is None else output_mode & ~0o6000,
         )
-        os.replace(temporary_path, output_path)
+        temporary_path.replace(output_path)
     finally:
         temporary_path.unlink(missing_ok=True)
 
 
 def _existing_output_mode(output_path: Path) -> int | None:
     try:
-        return stat.S_IMODE(output_path.stat().st_mode)
+        return output_path.stat().st_mode & 0o777
     except FileNotFoundError:
         return None
 
 
-def _create_temporary_output(output_path: Path) -> tuple[Path, int, int]:
+def _create_temporary_output(output_path: Path) -> tuple[Path, TextIO, int]:
+    suffix = 0
     while True:
-        temporary_path = output_path.with_name(f".lucas-cover-{secrets.token_hex(8)}")
+        temporary_path = output_path.with_name(f".lucas-cover-{suffix}")
         try:
-            temporary_fd = os.open(
-                temporary_path,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o666,
-            )
-            creation_mode = stat.S_IMODE(os.fstat(temporary_fd).st_mode)
-            return temporary_path, temporary_fd, creation_mode
+            temporary_file = temporary_path.open("x", encoding="utf-8")
+            creation_mode = temporary_path.stat().st_mode & 0o777
+            return temporary_path, temporary_file, creation_mode
         except FileExistsError:
+            suffix += 1
             continue
 
 
 def _write_temporary_output(
-    temporary_path: Path, temporary_fd: int, text: str, output_mode: int
+    temporary_path: Path,
+    temporary_file: TextIO,
+    text: str,
+    output_mode: int,
 ) -> None:
-    with os.fdopen(temporary_fd, "w", encoding="utf-8") as temporary:
-        _set_output_file_mode(temporary_path, temporary.fileno(), 0o600)
-        temporary.write(text)
-        _set_output_file_mode(temporary_path, temporary.fileno(), output_mode)
-
-
-def _set_output_file_mode(path: Path, file_descriptor: int, mode: int) -> None:
-    fchmod = getattr(os, "fchmod", None)
-    if fchmod is None:
-        os.chmod(path, mode)
-    else:
-        fchmod(file_descriptor, mode)
+    with temporary_file:
+        temporary_path.chmod(0o600)
+        temporary_file.write(text)
+        temporary_file.flush()
+        temporary_path.chmod(output_mode)
 
 
 def _paths_identify_same_file(first: Path, second: Path) -> bool:
