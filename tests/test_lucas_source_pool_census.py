@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import shapely
 from shapely.geometry import Point, box
@@ -42,6 +44,26 @@ def test_scoped_config_pins_three_sources_and_the_full_area_rule(repository_root
         "invalid_after_projection",
         "zero_area_after_projection",
     ]
+
+
+def test_revision_pins_are_exact_sha1_values_and_reject_the_old_wiki_typo(
+    repository_root, tmp_path
+):
+    config_path = repository_root / "config/lucas-source-pools.json"
+    config = _load_config(config_path)
+    canonical_wiki_pin = "d6fc058ccf4643bc5fe5bfd5c1c0bc403d3da801"
+    assert config["sources"]["Wikidata"]["input_revision"] == canonical_wiki_pin
+    assert len(canonical_wiki_pin) == 40
+
+    malformed = json.loads(config_path.read_text(encoding="utf-8"))
+    malformed["sources"]["Wikidata"]["input_revision"] = (
+        "d6fc058ccf4643bc5fe5bfdc5c1c0bc403d3da801"
+    )
+    malformed_path = tmp_path / "malformed-pins.json"
+    malformed_path.write_text(json.dumps(malformed), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Wikidata input_revision.*40-character"):
+        _load_config(malformed_path)
 
 
 def test_source_join_columns_never_request_sentence_text(repository_root):

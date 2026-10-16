@@ -1,0 +1,280 @@
+import hashlib
+import json
+from collections import Counter
+from pathlib import Path
+
+import pytest
+import shapely
+from shapely.geometry import box
+
+from tools import lucas_source_pool_census as census
+from tools.lucas_direct_source_snapshot import (
+    _description_text_units,
+    _direct_labels,
+    _validate_snapshot_root,
+    _website_text_units,
+    _wiki_document_links,
+    run_direct_source_pool_census,
+)
+
+
+def _snapshot_root(base, repository, revision):
+    root = base / f"datasets--{repository.replace('/', '--')}" / "snapshots" / revision
+    root.mkdir(parents=True)
+    return root
+
+
+def _write_parquet(root, relative, rows):
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(rows), path)
+    return path
+
+
+def _source_files(source_name, source, input_root, label_root):
+    geometry = box(0, 0, 1, 1)
+    geojson = shapely.to_geojson(geometry)
+    region = "albania"
+    if source_name == "Description":
+        _write_parquet(
+            input_root,
+            f"data/{region}-latest.parquet",
+            [{"osm_type": "way", "osm_id": 7, "geometry": geometry.wkb}],
+        )
+        _write_parquet(
+            input_root,
+            f"language-v1/data/{region}-latest.parquet",
+            [
+                {
+                    "description_identity": "desc-7",
+                    "osm_type": "way",
+                    "osm_id": 7,
+                    "tag_key": "description",
+                    "sentence_count": 1,
+                    "sentences": ["fixture text is never read"],
+                }
+            ],
+        )
+        labels_path = f"labels/language-v1/data/{region}-latest.parquet"
+        label = {
+            "description_identity": "desc-7",
+            "tag_key": "description",
+            "sentence_index": 0,
+        }
+        labels = [label]
+    elif source_name == "Website":
+        _write_parquet(
+            input_root,
+            f"polygons/{region}-latest.parquet",
+            [
+                {
+                    "polygon_id": "poly-7",
+                    "geometry": geojson,
+                    "website_sentence_count": 1,
+                    "contact_website_sentence_count": 1,
+                    "website_sentences": ["fixture text is never read"],
+                }
+            ],
+        )
+        labels_path = f"labels/polygons/{region}-latest.parquet"
+        labels = [
+            {"polygon_id": "poly-7", "field": field, "sentence_index": 0}
+            for field in ("website", "contact_website")
+        ]
+    else:
+        _write_parquet(
+            input_root,
+            f"polygons/{region}-latest.parquet",
+            [{"polygon_id": "poly-7", "geometry": geojson}],
+        )
+        _write_parquet(
+            input_root,
+            f"polygon_document_links/{region}-latest.parquet",
+            [{"document_id": "doc-7", "polygon_id": "poly-7"}],
+        )
+        _write_parquet(
+            input_root,
+            f"wikipedia/sentences/{region}-latest.parquet",
+            [
+                {
+                    "sentence_id": "sentence-7",
+                    "document_id": "doc-7",
+                    "text": "fixture text is never read",
+                }
+            ],
+        )
+        labels_path = f"labels/wikipedia/sentences/{region}-latest.parquet"
+        labels = [{"sentence_id": "sentence-7"}]
+    _write_parquet(
+        label_root,
+        labels_path,
+        [
+            {
+                **label,
+                "decision": "yes",
+                "input_revision": source["input_revision"],
+            }
+            for label in labels
+        ],
+    )
+
+
+def test_snapshot_root_requires_exact_cache_repository_and_commit(tmp_path):
+    expected = _snapshot_root(tmp_path, "owner/input", "a" * 40)
+    assert _validate_snapshot_root(expected, "owner/input", "a" * 40) == expected
+
+    with pytest.raises(ValueError, match="owner--input/snapshots"):
+        _validate_snapshot_root(expected, "owner/input", "b" * 40)
+
+
+def test_direct_labels_normalize_unsplit_to_skipped(tmp_path):
+    path = _write_parquet(
+        tmp_path,
+        "labels.parquet",
+        [
+            {
+                "sentence_id": "s1",
+                "decision": "skipped_unsplit",
+                "input_revision": "a" * 40,
+            }
+        ],
+    )
+
+    (label,) = _direct_labels(path, ("sentence_id",))
+
+    assert label["status"] == "skipped"
+
+
+@pytest.mark.parametrize("source_name", ["Description", "Website", "Wikidata"])
+def test_direct_snapshot_census_uses_source_keys_without_reading_text(
+    repository_root, tmp_path, monkeypatch, source_name
+):
+    config_path = repository_root / "config/lucas-source-pools.json"
+    config = census._load_config(config_path)
+    source = config["sources"][source_name]
+    input_root = _snapshot_root(
+        tmp_path, source["input_repository"], source["input_revision"]
+    )
+    label_root = _snapshot_root(
+        tmp_path, source["label_repository"], source["label_revision"]
+    )
+    _source_files(source_name, source, input_root, label_root)
+
+    class IdentityTransformer:
+        @staticmethod
+        def transform(x, y):
+            return x, y
+
+    def census_polygons(geometries, _bounds, _gpkg_path, decisions):
+        eligible = {polygon_id: "B00" for polygon_id, _ in geometries}
+        return (
+            eligible,
+            Counter({"eligible": len(eligible)}),
+            Counter(),
+            0,
+            0,
+            decisions,
+            None,
+        )
+
+    seen_columns = []
+    read_rows = census._iter_parquet_rows
+
+    def capture_columns(path, columns):
+        seen_columns.append(set(columns))
+        yield from read_rows(path, columns)
+
+    monkeypatch.setattr(census, "_iter_parquet_rows", capture_columns)
+    monkeypatch.setattr(census, "_projection", IdentityTransformer)
+    monkeypatch.setattr(census, "_census_polygons", census_polygons)
+    monkeypatch.setattr(census, "_asset_signature", lambda _path: (1, 1, 1, 1, 1))
+    monkeypatch.setattr(
+        census, "_verify_lucas_asset", lambda _path, _config: "asset-hash"
+    )
+    monkeypatch.setattr(
+        census, "_require_asset_signature", lambda _path, _signature: None
+    )
+    gpkg_path = tmp_path / "asset.gpkg"
+    gpkg_path.write_bytes(b"fixture")
+    lucas_config_path = tmp_path / "lucas.json"
+    lucas_config_path.write_text(
+        json.dumps(
+            {
+                "sha256": hashlib.sha256(b"fixture").hexdigest(),
+                "size_bytes": len(b"fixture"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = run_direct_source_pool_census(
+        input_root,
+        label_root,
+        gpkg_path,
+        config_path,
+        lucas_config_path,
+        source_name,
+        regions=["albania"],
+        stream_names=["description" if source_name == "Description" else "website"]
+        if source_name != "Wikidata"
+        else ["wikipedia"],
+    )
+
+    assert report["input_mode"] == "local-pinned-hf-cache-snapshots"
+    assert report["source_pins"]["input_revision"] == source["input_revision"]
+    assert report["aggregate_across_selected_streams"][
+        "eligible_source_relevance_instances"
+    ] == {"yes": 2 if source_name == "Website" else 1, "no": 0}
+    assert not any(
+        {"sentences", "sentence", "text", "original_text"}.intersection(columns)
+        for columns in seen_columns
+    )
+
+
+@pytest.mark.parametrize(
+    "columns,row,expected_message",
+    [
+        (
+            ("polygon_id", "website_sentence_count"),
+            {"polygon_id": "missing-polygon", "website_sentence_count": 1},
+            "Website row references a missing geometry polygon",
+        ),
+        (
+            ("description_identity", "osm_type", "osm_id", "tag_key", "sentence_count"),
+            {
+                "description_identity": "missing-polygon",
+                "osm_type": "way",
+                "osm_id": 99,
+                "tag_key": "description",
+                "sentence_count": 1,
+            },
+            "Description text row references a polygon missing from geometry data",
+        ),
+        (
+            ("document_id", "polygon_id"),
+            {"document_id": "doc-7", "polygon_id": "missing-polygon"},
+            "Wiki document link references a missing geometry polygon",
+        ),
+    ],
+)
+def test_direct_source_references_missing_geometry_are_rejected(
+    monkeypatch, columns, row, expected_message
+):
+    monkeypatch.setattr(
+        census,
+        "_iter_parquet_rows",
+        lambda _path, _columns: iter([row]),
+    )
+    with pytest.raises(ValueError, match=expected_message):
+        if "website_sentence_count" in columns:
+            list(
+                _website_text_units(
+                    Path("unused"), set(), {"website": "website_sentence_count"}
+                )
+            )
+        elif "osm_type" in columns:
+            list(_description_text_units(Path("unused"), set()))
+        else:
+            _wiki_document_links(Path("unused"), set())

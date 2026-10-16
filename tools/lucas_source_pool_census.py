@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import json
 import math
+import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
@@ -53,6 +54,12 @@ _COVERAGE_OUTCOMES = (
 _STATUS_NAMES = ("yes", "no", "skipped", "failed")
 _BATCH_SIZE = 20_000
 _SEEN_ELIGIBLE_KEY = object()
+_GIT_SHA1 = re.compile(r"^[0-9a-f]{40}$")
+_DIRECT_SCHEMAS = {
+    "description-language-v1",
+    "website-polygons-v1",
+    "wiki-document-sentences-v1",
+}
 
 
 def method_report(config: dict[str, Any]) -> dict[str, Any]:
@@ -82,12 +89,83 @@ def _load_config(path: Path) -> dict[str, Any]:
         raise ValueError("the pinned LUCAS threshold must remain 0.80")
     if config["eligibility"]["uncovered_polygons_are_negative"] is not False:
         raise ValueError("uncovered polygons cannot be labeled negative")
-    for source in config["sources"].values():
+    for source_name, source in config["sources"].items():
+        for pin_name in ("input_revision", "label_revision"):
+            revision = source.get(pin_name)
+            if not isinstance(revision, str) or _GIT_SHA1.fullmatch(revision) is None:
+                raise ValueError(
+                    f"{source_name} {pin_name} must be a 40-character "
+                    "lowercase Git SHA-1"
+                )
         if source["geometry_encoding"] not in {"wkb", "geojson"}:
             raise ValueError("unsupported source geometry encoding")
         if not source["join_key_fields"] or not source["streams"]:
             raise ValueError("each source needs a join key and at least one stream")
+        direct_input = source.get("direct_input")
+        if (
+            not isinstance(direct_input, dict)
+            or direct_input.get("schema") not in _DIRECT_SCHEMAS
+        ):
+            raise ValueError(f"{source_name} has an unsupported direct-input schema")
+        _validate_direct_input(source_name, source)
     return config
+
+
+def _validate_direct_input(source_name: str, source: dict[str, Any]) -> None:
+    direct_input = source["direct_input"]
+    schema = direct_input["schema"]
+    required = {
+        "description-language-v1": (
+            "polygon_path_template",
+            "text_path_template",
+        ),
+        "website-polygons-v1": (
+            "polygon_path_template",
+            "text_path_template",
+            "sentence_count_fields",
+        ),
+        "wiki-document-sentences-v1": (
+            "polygon_path_template",
+            "links_path_template",
+        ),
+    }[schema]
+    for name in required:
+        if name not in direct_input:
+            raise ValueError(f"{source_name} direct_input is missing {name}")
+    templates = [
+        value for name, value in direct_input.items() if name.endswith("path_template")
+    ]
+    if schema == "wiki-document-sentences-v1":
+        for stream in source["streams"]:
+            if not isinstance(stream.get("text_path_template"), str):
+                raise ValueError(f"{source_name} Wiki stream needs a text path")
+            templates.append(stream["text_path_template"])
+    for template in templates:
+        if not isinstance(template, str) or not template:
+            raise ValueError(f"{source_name} direct-source path template is invalid")
+        try:
+            rendered = template.format(region="albania", stream="wikipedia")
+        except (KeyError, ValueError) as exc:
+            raise ValueError(
+                f"{source_name} direct-source path template is invalid"
+            ) from exc
+        path = Path(rendered)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(
+                f"{source_name} direct-source paths must stay in the snapshot"
+            )
+    if schema == "website-polygons-v1":
+        fields = direct_input["sentence_count_fields"]
+        if (
+            not isinstance(fields, dict)
+            or set(fields)
+            != {
+                "website",
+                "contact_website",
+            }
+            or any(not isinstance(value, str) or not value for value in fields.values())
+        ):
+            raise ValueError(f"{source_name} Website sentence-count fields are invalid")
 
 
 def _source_config(config: dict[str, Any], source_name: str) -> dict[str, Any]:
@@ -165,7 +243,7 @@ def _iter_parquet_rows(
         import pyarrow.parquet as pq
     except ImportError as exc:
         raise RuntimeError(
-            "install PyArrow to read the pinned Atlas parquet files"
+            "install PyArrow to read pinned source or Atlas parquet files"
         ) from exc
     parquet = pq.ParquetFile(path)
     for batch in parquet.iter_batches(
@@ -807,7 +885,9 @@ def _write_new_json(path: Path, result: dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--atlas-root", required=True, type=Path)
+    parser.add_argument("--atlas-root", type=Path)
+    parser.add_argument("--source-snapshot", type=Path)
+    parser.add_argument("--label-snapshot", type=Path)
     parser.add_argument("--lucas-gpkg", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--config", type=Path, default=_CONFIG_PATH)
@@ -818,26 +898,61 @@ def main() -> None:
     parser.add_argument("--availability-only", action="store_true")
     args = parser.parse_args()
     if args.availability_only:
-        if args.source or args.region or args.stream or args.lucas_gpkg:
+        if (
+            args.source
+            or args.region
+            or args.stream
+            or args.lucas_gpkg
+            or args.source_snapshot
+            or args.label_snapshot
+        ):
             parser.error(
                 "availability mode reads all pinned manifests; "
                 "omit source/region/stream/gpkg"
             )
+        if args.atlas_root is None:
+            parser.error("availability mode requires --atlas-root")
         result = run_availability_report(args.atlas_root, args.config)
     else:
         if not args.source or args.lucas_gpkg is None or args.output is None:
             parser.error(
                 "census mode requires --source, --lucas-gpkg, and a new --output path"
             )
-        result = run_source_pool_census(
-            args.atlas_root,
-            args.lucas_gpkg,
-            args.config,
-            args.lucas_source_config,
-            args.source,
-            regions=args.regions,
-            stream_names=args.streams,
-        )
+        if args.source_snapshot or args.label_snapshot:
+            if args.atlas_root is not None:
+                parser.error("choose either Atlas or direct source snapshots")
+            if args.source_snapshot is None or args.label_snapshot is None:
+                parser.error(
+                    "direct mode requires both --source-snapshot and --label-snapshot"
+                )
+            from tools.lucas_direct_source_snapshot import (
+                run_direct_source_pool_census,
+            )
+
+            result = run_direct_source_pool_census(
+                args.source_snapshot,
+                args.label_snapshot,
+                args.lucas_gpkg,
+                args.config,
+                args.lucas_source_config,
+                args.source,
+                regions=args.regions,
+                stream_names=args.streams,
+            )
+        else:
+            if args.atlas_root is None:
+                parser.error(
+                    "census mode requires --atlas-root or both pinned source snapshots"
+                )
+            result = run_source_pool_census(
+                args.atlas_root,
+                args.lucas_gpkg,
+                args.config,
+                args.lucas_source_config,
+                args.source,
+                regions=args.regions,
+                stream_names=args.streams,
+            )
     if args.output is None:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     else:

@@ -69,9 +69,11 @@ The Europe receipt is git-ignored at
 `data/quality/lucas-description-europe-census.jsonl`. Its per-region counts
 reconcile, but the checkpoint driver used for that run is also git-ignored.
 The tracked source-pool census now supports the three source schemas across
-the configured region scope, but no complete tracked spatial run has reproduced
-the receipt. Treat the Europe aggregate as recorded evidence, not an
-independently reproducible tracked run; this provenance gap is still open.
+the configured region scope and can read either Atlas outputs or exact-revision
+HF snapshots already in the local cache. The direct adapter has synthetic
+tests, but no complete tracked spatial run has reproduced the receipt. Treat
+the Europe aggregate as recorded evidence, not an independently reproducible
+tracked run; this provenance gate remains open.
 
 ## Bounded Austria and Belgium results
 
@@ -137,7 +139,10 @@ The support scan queried 234,593 RTree candidates: 215,746 accepted and
 totals were 333,347 `yes`, 135,403 `no`, 39,136 `skipped`, and 6,669 `failed`.
 Only 4 `yes` and 1 `no` joined to eligible polygons.
 
-The executable path is `tools/lucas_description_census.py`.
+The executable paths are `tools/lucas_description_census.py` for the bounded
+Description run and `tools/lucas_source_pool_census.py` for the three-source
+census. Its direct mode reads only exact-pinned snapshots already present in
+the local HF cache; it does not download source files or read sentence text.
 The compact Austria and Belgium receipt remains local and git-ignored.
 
 ## Remaining source/reference pairs
@@ -163,18 +168,20 @@ Wiki row groups just to fill this gap.
   recorded, but matching EU assignment outputs are unavailable.
 - **Europe receipt provenance:** the 110-partition Description receipt was
   produced by a git-ignored checkpoint driver. The tracked source-pool census
-  covers all configured source schemas, but a full spatial run is pending.
-  Rerun after Atlas stops writing to the shared drive.
+  covers all configured source schemas and supports direct local HF cache
+  snapshots, but no full spatial run has been reproduced from that tracked
+  path.
 - **Sampling:** H3 resolution 3, seed 42, maximum 20 instances per cell applies
   only after all nine eligible yes/no pools are measured. No sampling has run.
 - **Compute:** no inference or Grid5000 allocation has started. Complete all
   relevant data manifests and the live Grid5000 usage-policy check before any
   inference request. No external outreach or allocation was made.
 
-Next, run the tracked source-pool census after Atlas finishes, complete the
-missing Wikidata/Wikipedia streams, freeze the EUNIS threshold and available
-assignments, obtain the missing WorldCover assignments, and report exact
-per-pair yes/no pools before sampling or compute.
+Next, reproduce the source-pool census from exact-pinned local source and label
+snapshots without disturbing Atlas, complete the missing Wikidata/Wikipedia
+streams, freeze the EUNIS threshold and available assignments, obtain the
+missing WorldCover assignments, and report exact per-pair yes/no pools before
+sampling or compute.
 
 The pinned binary classifier is `place-relevance-v2`, run
 `bc1fdc83579d6793f44d`, public model revision
