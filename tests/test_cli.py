@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 from io import BytesIO
-from types import SimpleNamespace
 
 import pytest
 from lucas_gpkg_builder import feature, write_lucas_gpkg
@@ -225,10 +224,7 @@ def test_output_replacement_preserves_executable_permissions(tmp_path):
     assert output_path.stat().st_mode & 0o777 == 0o751
 
 
-def test_output_skips_existing_temporary_directory_without_touching_it(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(cli, "_temporary_directory_parent", lambda path: path.parent)
+def test_output_leaves_existing_temporary_directory_like_path_untouched(tmp_path):
     collision_directory = tmp_path / ".lucas-cover-0"
     collision_directory.mkdir()
     marker_path = collision_directory / "keep"
@@ -239,25 +235,32 @@ def test_output_skips_existing_temporary_directory_without_touching_it(
 
     assert output_path.read_text(encoding="utf-8") == "new report"
     assert marker_path.read_text(encoding="utf-8") == "pre-existing"
-    assert not (tmp_path / ".lucas-cover-1").exists()
+    assert set(tmp_path.glob(".lucas-cover-*")) == {collision_directory}
 
 
-def test_output_can_use_a_temporary_directory_like_name(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli, "_temporary_directory_parent", lambda path: path.parent)
+def test_output_can_use_a_temporary_directory_like_name(tmp_path):
     output_path = tmp_path / ".lucas-cover-0"
 
     cli._write_output(str(output_path), "report")
 
     assert output_path.is_file()
     assert output_path.read_text(encoding="utf-8") == "report"
-    assert not (tmp_path / ".lucas-cover-1").exists()
+    assert set(tmp_path.glob(".lucas-cover-*")) == {output_path}
+
+
+def test_output_can_use_a_case_variant_of_a_temporary_directory_name(tmp_path):
+    output_path = tmp_path / ".LUCAS-COVER-0"
+
+    cli._write_output(str(output_path), "report")
+
+    assert output_path.is_file()
+    assert output_path.read_text(encoding="utf-8") == "report"
 
 
 @pytest.mark.parametrize("failure_point", ["open", "stat"])
 def test_temporary_output_creation_failure_cleans_partial_state(
     failure_point, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(cli, "_temporary_directory_parent", lambda path: path.parent)
     original_open = cli.Path.open
     original_stat = cli.Path.stat
 
@@ -277,32 +280,53 @@ def test_temporary_output_creation_failure_cleans_partial_state(
     with pytest.raises(OSError, match=f"injected {failure_point} failure"):
         cli._create_temporary_output(tmp_path / "coverage.json")
 
-    assert not (tmp_path / ".lucas-cover-0").exists()
+    assert not list(tmp_path.glob(".lucas-cover-*"))
 
 
-@pytest.mark.parametrize("same_filesystem", [True, False])
-def test_windows_temporary_directory_stays_on_home_filesystem(
-    same_filesystem, tmp_path, monkeypatch
+def test_temporary_directory_uses_destination_parent(tmp_path):
+    destination_parent = tmp_path / "output"
+    destination_parent.mkdir()
+    output_path = destination_parent / "report"
+
+    temporary_directory, temporary_path, temporary_file, _ = (
+        cli._create_temporary_output(output_path)
+    )
+    try:
+        assert temporary_directory.parent == destination_parent
+        assert temporary_path.parent == temporary_directory
+    finally:
+        temporary_file.close()
+        temporary_path.unlink(missing_ok=True)
+        temporary_directory.rmdir()
+
+
+def test_case_insensitive_temporary_directory_collision_is_cleaned(
+    tmp_path, monkeypatch
 ):
-    home = tmp_path / "home"
-    destination_parent = home / "output"
-    devices = {home: 1, destination_parent: 1 if same_filesystem else 2}
-    original_stat = cli.Path.stat
+    output_path = tmp_path / ".LUCAS-COVER-0"
+    temporary_path = tmp_path / ".lucas-cover-0"
+    original_samefile = cli.Path.samefile
 
-    def fake_stat(path, *args, **kwargs):
-        if path in devices:
-            return SimpleNamespace(st_dev=devices[path])
-        return original_stat(path, *args, **kwargs)
+    def create_temporary_directory(*, prefix, dir):
+        temporary_path.mkdir()
+        return str(temporary_path)
 
-    monkeypatch.setattr(cli.sys, "platform", "win32")
-    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: home))
-    monkeypatch.setattr(cli.Path, "stat", fake_stat)
+    def case_insensitive_samefile(path, other):
+        if (
+            path.parent == other.parent
+            and path.name.casefold() == other.name.casefold()
+        ):
+            return True
+        return original_samefile(path, other)
 
-    if same_filesystem:
-        assert cli._temporary_directory_parent(destination_parent / "report") == home
-    else:
-        with pytest.raises(ValueError, match="must be on the user's home filesystem"):
-            cli._temporary_directory_parent(destination_parent / "report")
+    monkeypatch.setattr(cli.tempfile, "mkdtemp", create_temporary_directory)
+    monkeypatch.setattr(cli.Path, "samefile", case_insensitive_samefile)
+
+    with pytest.raises(FileExistsError, match="collide with output path"):
+        cli._create_temporary_directory(output_path)
+
+    assert not temporary_path.exists()
+    assert not output_path.exists()
 
 
 def test_output_symlink_keeps_target_behavior(tmp_path):

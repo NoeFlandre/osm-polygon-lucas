@@ -82,14 +82,17 @@ jobs:
           if stats["total"] == 0:
               raise SystemExit("Mutation run produced no mutants")
           results = Path("mutation-results.txt").read_text(encoding="utf-8")
-          pattern = re.compile(r"^\s*[\w.]+: (killed|survived|no tests|skipped|suspicious|timeout|segfault|caught by type check|check was interrupted by user|not checked)\s*$")
-          statuses = []
+          pattern = re.compile(
+              r"^\s*([\w.]+): (killed|survived|no tests|skipped|suspicious|timeout|segfault|caught by type check|check was interrupted by user|not checked)\s*$"
+          )
+          outcomes = []
           for line in results.splitlines():
               if line.strip():
                   match = pattern.fullmatch(line)
                   if match is None:
                       raise SystemExit(f"Unrecognized mutation result row: {line!r}")
-                  statuses.append(match.group(1))
+                  outcomes.append((match.group(1), match.group(2)))
+          statuses = [status for _, status in outcomes]
           counts = Counter(status.replace(" ", "_") for status in statuses)
           if len(statuses) != stats["total"]:
               raise SystemExit(f"Mutation inventory mismatch: {len(statuses)} rows, stats total {stats['total']}")
@@ -102,6 +105,13 @@ jobs:
               raise SystemExit("Mutation run was interrupted")
           incomplete = {field: counts[field] for field in ("no_tests", "skipped", "suspicious", "timeout", "segfault", "caught_by_type_check", "not_checked") if counts[field]}
           if incomplete:
+              for status in incomplete:
+                  mutant_ids = [
+                      mutant
+                      for mutant, outcome in outcomes
+                      if outcome == status.replace("_", " ")
+                  ]
+                  print(f"{status} mutant IDs: {mutant_ids}")
               raise SystemExit(f"Mutation run has incomplete/non-verdict outcomes: {incomplete}")
           score = 100 * stats["killed"] / stats["total"]
           print(f"Complete mutation inventory: {stats['total']} mutants; {stats['killed']} killed; {stats['survived']} survived; score={score:.2f}%.")

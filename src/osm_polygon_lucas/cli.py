@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import sys
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -283,8 +284,7 @@ def _existing_output_mode(output_path: Path) -> int | None:
 def _create_temporary_output(
     output_path: Path,
 ) -> tuple[Path, Path, TextIO, int]:
-    directory_parent = _temporary_directory_parent(output_path)
-    temporary_directory = _create_temporary_directory(output_path, directory_parent)
+    temporary_directory = _create_temporary_directory(output_path)
     temporary_path = temporary_directory / "report"
     temporary_file: TextIO | None = None
     try:
@@ -299,30 +299,17 @@ def _create_temporary_output(
     return temporary_directory, temporary_path, temporary_file, creation_mode
 
 
-def _create_temporary_directory(output_path: Path, parent: Path) -> Path:
-    suffix = 0
-    while True:
-        temporary_directory = parent / f".lucas-cover-{suffix}"
-        if temporary_directory == output_path:
-            suffix += 1
-            continue
-        try:
-            temporary_directory.mkdir(mode=0o700)
-        except FileExistsError:
-            suffix += 1
-            continue
-        return temporary_directory
-
-
-def _temporary_directory_parent(output_path: Path) -> Path:
-    if sys.platform != "win32":
-        return output_path.parent
-    home = Path.home()
-    if home.stat().st_dev != output_path.parent.stat().st_dev:
-        raise ValueError(
-            "on Windows, atomic file output must be on the user's home filesystem"
-        )
-    return home
+def _create_temporary_directory(output_path: Path) -> Path:
+    temporary_directory = Path(
+        tempfile.mkdtemp(prefix=".lucas-cover-", dir=output_path.parent)
+    )
+    try:
+        if _paths_identify_same_file(temporary_directory, output_path):
+            raise FileExistsError("temporary directory would collide with output path")
+    except BaseException:
+        temporary_directory.rmdir()
+        raise
+    return temporary_directory
 
 
 def _write_temporary_output(
