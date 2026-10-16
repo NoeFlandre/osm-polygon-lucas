@@ -36,9 +36,12 @@ The JSON includes no timestamp or local file path. It labels the manifest digest
 not hash the user-supplied GeoPackage during each run.
 When a file output is requested, the CLI rejects output paths that resolve to or
 identify either input file, including symlink and hard-link aliases.
-It writes to a temporary file in the resolved destination directory and replaces
-the destination directory entry atomically, protecting inputs from a late change
-to that entry after the alias checks.
+It writes inside an owner-only temporary directory on POSIX, then replaces the
+destination directory entry atomically, protecting inputs from a late change to
+that entry after the alias checks. On Windows, it creates the temporary directory
+under the user's home directory; file output is supported only when the destination
+shares that filesystem so the replacement remains atomic. The temporary directory
+inherits the user's home-directory ACL.
 The CLI applies the approved direct floating comparison `fraction >= 0.80`; it does
 not apply a ULP tolerance. Same-class geometries are unioned before measurement, and
 multiple classes at the gate produce an ambiguous result.

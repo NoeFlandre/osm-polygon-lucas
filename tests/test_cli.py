@@ -171,6 +171,22 @@ def test_output_file_is_utf8(tmp_path):
     assert output_path.read_bytes() == output.encode("utf-8")
 
 
+def test_temporary_output_opens_with_explicit_utf8_encoding(tmp_path, monkeypatch):
+    output_path = tmp_path / "coverage.json"
+    original_open = cli.Path.open
+    encodings = []
+
+    def recording_open(path, *args, **kwargs):
+        encodings.append(kwargs.get("encoding"))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli.Path, "open", recording_open)
+
+    cli._write_output(str(output_path), "report")
+
+    assert encodings == ["utf-8"]
+
+
 def test_output_file_uses_normal_creation_permissions(tmp_path):
     output_path = tmp_path / "coverage.json"
     original_umask = os.umask(0o027)
@@ -191,6 +207,34 @@ def test_output_replacement_preserves_existing_permissions(tmp_path):
 
     assert output_path.read_text(encoding="utf-8") == "new report"
     assert output_path.stat().st_mode & 0o777 == 0o640
+
+
+def test_output_replacement_preserves_executable_permissions(tmp_path):
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+    output_path.chmod(0o751)
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+    assert output_path.stat().st_mode & 0o777 == 0o751
+
+
+def test_output_skips_existing_temporary_directory_without_touching_it(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cli, "_temporary_directory_parent", lambda path: path.parent)
+    collision_directory = tmp_path / ".lucas-cover-0"
+    collision_directory.mkdir()
+    marker_path = collision_directory / "keep"
+    marker_path.write_text("pre-existing", encoding="utf-8")
+    output_path = tmp_path / "coverage.json"
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+    assert marker_path.read_text(encoding="utf-8") == "pre-existing"
+    assert not (tmp_path / ".lucas-cover-1").exists()
 
 
 def test_output_symlink_keeps_target_behavior(tmp_path):
@@ -426,7 +470,19 @@ def test_cli_reports_an_output_symlink_loop_without_a_traceback(tmp_path, capsys
     assert error.value.code == 2
     stderr = capsys.readouterr().err
     assert "error:" in stderr
+    assert "output path contains a symlink loop" in stderr
     assert "Traceback" not in stderr
+
+
+def test_input_alias_check_reports_a_symlink_loop(tmp_path):
+    output_path = tmp_path / "coverage.json"
+    loop_path = tmp_path / "loop"
+    loop_path.symlink_to(loop_path.name)
+
+    with pytest.raises(
+        ValueError, match="^output or input path contains a symlink loop$"
+    ):
+        cli._paths_identify_same_file(output_path, loop_path)
 
 
 def test_cli_requires_wkt_crs_and_geopackage_arguments(tmp_path):

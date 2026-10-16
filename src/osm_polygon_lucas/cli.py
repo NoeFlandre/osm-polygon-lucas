@@ -257,19 +257,20 @@ def _resolved_output_path(path: str) -> Path:
 
 def _write_output_atomically(output_path: Path, text: str) -> None:
     output_mode = _existing_output_mode(output_path)
-    temporary_path, temporary_file, creation_mode = _create_temporary_output(
-        output_path
+    temporary_directory, temporary_path, temporary_file, creation_mode = (
+        _create_temporary_output(output_path)
     )
     try:
         _write_temporary_output(
             temporary_path,
             temporary_file,
             text,
-            creation_mode if output_mode is None else output_mode & ~0o6000,
+            creation_mode if output_mode is None else output_mode,
         )
         temporary_path.replace(output_path)
     finally:
         temporary_path.unlink(missing_ok=True)
+        temporary_directory.rmdir()
 
 
 def _existing_output_mode(output_path: Path) -> int | None:
@@ -279,17 +280,41 @@ def _existing_output_mode(output_path: Path) -> int | None:
         return None
 
 
-def _create_temporary_output(output_path: Path) -> tuple[Path, TextIO, int]:
+def _create_temporary_output(
+    output_path: Path,
+) -> tuple[Path, Path, TextIO, int]:
+    directory_parent = _temporary_directory_parent(output_path)
     suffix = 0
     while True:
-        temporary_path = output_path.with_name(f".lucas-cover-{suffix}")
+        temporary_directory = directory_parent / f".lucas-cover-{suffix}"
         try:
-            temporary_file = temporary_path.open("x", encoding="utf-8")
-            creation_mode = temporary_path.stat().st_mode & 0o777
-            return temporary_path, temporary_file, creation_mode
+            temporary_directory.mkdir(mode=0o700)
         except FileExistsError:
             suffix += 1
             continue
+        temporary_path = temporary_directory / "report"
+        temporary_file: TextIO | None = None
+        try:
+            temporary_file = temporary_path.open("x", encoding="utf-8")
+            creation_mode = temporary_path.stat().st_mode & 0o777
+        except BaseException:
+            if temporary_file is not None:
+                temporary_file.close()
+                temporary_path.unlink(missing_ok=True)
+            temporary_directory.rmdir()
+            raise
+        return temporary_directory, temporary_path, temporary_file, creation_mode
+
+
+def _temporary_directory_parent(output_path: Path) -> Path:
+    if sys.platform != "win32":
+        return output_path.parent
+    home = Path.home()
+    if home.stat().st_dev != output_path.parent.stat().st_dev:
+        raise ValueError(
+            "on Windows, atomic file output must be on the user's home filesystem"
+        )
+    return home
 
 
 def _write_temporary_output(
