@@ -284,26 +284,34 @@ def _create_temporary_output(
     output_path: Path,
 ) -> tuple[Path, Path, TextIO, int]:
     directory_parent = _temporary_directory_parent(output_path)
+    temporary_directory = _create_temporary_directory(output_path, directory_parent)
+    temporary_path = temporary_directory / "report"
+    temporary_file: TextIO | None = None
+    try:
+        temporary_file = temporary_path.open("x", encoding="utf-8")
+        creation_mode = temporary_path.stat().st_mode & 0o777
+    except BaseException:
+        if temporary_file is not None:
+            temporary_file.close()
+            temporary_path.unlink(missing_ok=True)
+        temporary_directory.rmdir()
+        raise
+    return temporary_directory, temporary_path, temporary_file, creation_mode
+
+
+def _create_temporary_directory(output_path: Path, parent: Path) -> Path:
     suffix = 0
     while True:
-        temporary_directory = directory_parent / f".lucas-cover-{suffix}"
+        temporary_directory = parent / f".lucas-cover-{suffix}"
+        if temporary_directory == output_path:
+            suffix += 1
+            continue
         try:
             temporary_directory.mkdir(mode=0o700)
         except FileExistsError:
             suffix += 1
             continue
-        temporary_path = temporary_directory / "report"
-        temporary_file: TextIO | None = None
-        try:
-            temporary_file = temporary_path.open("x", encoding="utf-8")
-            creation_mode = temporary_path.stat().st_mode & 0o777
-        except BaseException:
-            if temporary_file is not None:
-                temporary_file.close()
-                temporary_path.unlink(missing_ok=True)
-            temporary_directory.rmdir()
-            raise
-        return temporary_directory, temporary_path, temporary_file, creation_mode
+        return temporary_directory
 
 
 def _temporary_directory_parent(output_path: Path) -> Path:

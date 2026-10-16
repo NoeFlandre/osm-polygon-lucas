@@ -11,6 +11,8 @@ from shapely.geometry import Polygon, box
 from osm_polygon_lucas import cli
 from osm_polygon_lucas.cli import main
 
+WINDOWS = cli.sys.platform == "win32"
+
 
 def test_cli_emits_deterministic_json_with_source_and_all_point_evidence(
     tmp_path, capsys
@@ -187,6 +189,7 @@ def test_temporary_output_opens_with_explicit_utf8_encoding(tmp_path, monkeypatc
     assert encodings == ["utf-8"]
 
 
+@pytest.mark.skipif(WINDOWS, reason="POSIX permission bits are not Windows ACLs")
 def test_output_file_uses_normal_creation_permissions(tmp_path):
     output_path = tmp_path / "coverage.json"
     original_umask = os.umask(0o027)
@@ -198,6 +201,7 @@ def test_output_file_uses_normal_creation_permissions(tmp_path):
     assert output_path.stat().st_mode & 0o777 == 0o640
 
 
+@pytest.mark.skipif(WINDOWS, reason="POSIX permission bits are not Windows ACLs")
 def test_output_replacement_preserves_existing_permissions(tmp_path):
     output_path = tmp_path / "coverage.json"
     output_path.write_text("old report", encoding="utf-8")
@@ -209,6 +213,7 @@ def test_output_replacement_preserves_existing_permissions(tmp_path):
     assert output_path.stat().st_mode & 0o777 == 0o640
 
 
+@pytest.mark.skipif(WINDOWS, reason="POSIX permission bits are not Windows ACLs")
 def test_output_replacement_preserves_executable_permissions(tmp_path):
     output_path = tmp_path / "coverage.json"
     output_path.write_text("old report", encoding="utf-8")
@@ -234,6 +239,17 @@ def test_output_skips_existing_temporary_directory_without_touching_it(
 
     assert output_path.read_text(encoding="utf-8") == "new report"
     assert marker_path.read_text(encoding="utf-8") == "pre-existing"
+    assert not (tmp_path / ".lucas-cover-1").exists()
+
+
+def test_output_can_use_a_temporary_directory_like_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_temporary_directory_parent", lambda path: path.parent)
+    output_path = tmp_path / ".lucas-cover-0"
+
+    cli._write_output(str(output_path), "report")
+
+    assert output_path.is_file()
+    assert output_path.read_text(encoding="utf-8") == "report"
     assert not (tmp_path / ".lucas-cover-1").exists()
 
 

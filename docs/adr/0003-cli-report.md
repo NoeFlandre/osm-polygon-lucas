@@ -41,8 +41,9 @@ replaces the destination's final directory entry. A late symlink or hard-link sw
 at that entry is replaced as an entry rather than followed to overwrite an input.
 On Windows, the temporary directory is created under the user's home directory;
 file output is supported only when the destination shares that filesystem so the
-replacement remains atomic. The temporary directory inherits the home-directory
-ACL.
+replacement remains atomic. The report retains the temporary directory's ACL,
+which can differ from the destination's ACL; `Path.chmod` does not preserve
+Windows ACLs.
 The CLI applies the approved direct floating comparison `fraction >= 0.80`; it does
 not apply a ULP tolerance. Same-class geometries are unioned before measurement, and
 multiple classes at the gate produce an ambiguous result.
