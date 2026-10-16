@@ -237,6 +237,58 @@ def test_output_skips_existing_temporary_directory_without_touching_it(
     assert not (tmp_path / ".lucas-cover-1").exists()
 
 
+@pytest.mark.parametrize("failure_point", ["open", "stat"])
+def test_temporary_output_creation_failure_cleans_partial_state(
+    failure_point, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cli, "_temporary_directory_parent", lambda path: path.parent)
+    original_open = cli.Path.open
+    original_stat = cli.Path.stat
+
+    def failing_open(path, *args, **kwargs):
+        if failure_point == "open" and path.name == "report":
+            raise OSError("injected open failure")
+        return original_open(path, *args, **kwargs)
+
+    def failing_stat(path, *args, **kwargs):
+        if failure_point == "stat" and path.name == "report":
+            raise OSError("injected stat failure")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli.Path, "open", failing_open)
+    monkeypatch.setattr(cli.Path, "stat", failing_stat)
+
+    with pytest.raises(OSError, match=f"injected {failure_point} failure"):
+        cli._create_temporary_output(tmp_path / "coverage.json")
+
+    assert not (tmp_path / ".lucas-cover-0").exists()
+
+
+@pytest.mark.parametrize("same_filesystem", [True, False])
+def test_windows_temporary_directory_stays_on_home_filesystem(
+    same_filesystem, tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    destination_parent = home / "output"
+    devices = {home: 1, destination_parent: 1 if same_filesystem else 2}
+    original_stat = cli.Path.stat
+
+    def fake_stat(path, *args, **kwargs):
+        if path in devices:
+            return SimpleNamespace(st_dev=devices[path])
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(cli.Path, "stat", fake_stat)
+
+    if same_filesystem:
+        assert cli._temporary_directory_parent(destination_parent / "report") == home
+    else:
+        with pytest.raises(ValueError, match="must be on the user's home filesystem"):
+            cli._temporary_directory_parent(destination_parent / "report")
+
+
 def test_output_symlink_keeps_target_behavior(tmp_path):
     target_path = tmp_path / "target.json"
     target_path.write_text("old report", encoding="utf-8")
