@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "cohort_design": {
+    "source_names": [
+      "Description",
+      "Website",
+      "Wiki"
+    ],
+    "reference_names": [
+      "LUCAS",
+      "EUNIS",
+      "WorldCover"
+    ],
+    "sentence_target_per_source_reference_pair": 1000,
+    "existing_source_relevance_counts": {
+      "yes": 500,
+      "no": 500
+    },
+    "eligibility_before_geographic_sampling": true,
+    "allow_shortfall_without_padding_or_relabeling": true,
+    "candidate_generation_order": [
+      "pinned_source_label_and_osm_polygon_join",
+      "reference_support_spatial_intersection",
+      "reference_coverage_eligibility",
+      "exact_eligible_yes_no_counts",
+      "geographic_sampling"
+    ],
+    "geographic_sampling": {
+      "method": "H3",
+      "resolution": 3,
+      "seed": 42,
+      "maximum_per_cell": 20
+    },
+    "polygon_ablation_target_per_stratum": 1000,
+    "polygon_ablation_status": "deferred"
+  },
+  "sources": {
+    "Description": {
+      "input_repository": "NoeFlandre/osm-polygon-description-tag",
+      "input_revision": "b4706eb315c66a8a57135289e7612dca8e03caf8",
+      "label_repository": "NoeFlandre/osm-polygon-description-tag-landuse",
+      "label_revision": "ce98b328f3c6543800a3d931877b51eb3f0cf768",
+      "assembly_status": "110/110 Europe manifests present; pre-LUCAS labels yes 333347, no 135403, skipped 39136, failed 6669. An earlier local spatial receipt reports 4 eligible yes and 1 eligible no; tracked spatial reproduction remains open."
+    },
+    "Website": {
+      "input_repository": "NoeFlandre/osm-polygon-website-tag",
+      "input_revision": "4cbddf95ce614e68d5ada8b94ca21bf9e48d39dd",
+      "label_repository": "NoeFlandre/osm-polygon-website-tag-landuse",
+      "label_revision": "e6524c711ee0033c3cd5990e5fdbbe4b89992dfb",
+      "assembly_status": "110/110 Europe manifests present; pre-LUCAS labels yes 6029604, no 21494268, skipped 23953, failed 263465. Spatial eligibility has not run."
+    },
+    "Wiki": {
+      "input_repository": "NoeFlandre/osm-polygon-wikidata-and-wikipedia",
+      "input_revision": "d6fc058ccf4643bc5fe5bfd5c1c0bc403d3da801",
+      "label_repository": "NoeFlandre/osm-polygon-wikidata-and-wikipedia-landuse",
+      "label_revision": "49307aeb05b6dcc8a5d393f77f59a1e6d13a967a",
+      "assembly_status": "Wikidata/Wikipedia Atlas source: Wikipedia manifests 2/110 and Wikivoyage manifests 0/110. The partial Wikipedia manifests contain pre-LUCAS labels yes 88739, no 161033, skipped 2211, failed 4256; spatial eligibility has not run."
+    }
+  },
+  "references": {
+    "LUCAS": {
+      "asset_manifest": "config/lucas-2022-source.json",
+      "eligibility_rule": "a polygon is eligible only when exactly one main_category code covers at least 80% of its full original OSM polygon area; polygons below threshold, ambiguous, unmapped, or without positive-area overlap are excluded, and their linked source labels are not counted",
+      "source_relevance_labels": "existing yes/no labels describe source sentence relevance and are independent of the LUCAS main_category reference code",
+      "eligible_counts_status": "An earlier local Description receipt reports 4 eligible yes and 1 eligible no, but its checkpoint driver was not tracked. The tracked three-source census is ready; spatial eligibility remains unmeasured while the pinned Atlas build is active. Manifest-only totals are pre-LUCAS and do not establish eligible pools."
+    },
+    "EUNIS": {
+      "release": "EEA 2021 probability maps",
+      "assignment_method": "largest-intersection (provisional)",
+      "probability_threshold": null,
+      "eligible_counts_status": "blocked pending threshold decision and pinned outputs"
+    },
+    "WorldCover": {
+      "product": "ESA WorldCover v200",
+      "year": 2021,
+      "dominance_fraction_of_full_original_polygon_area": 0.8,
+      "assignment_manifest": null,
+      "eligible_counts_status": "blocked; matching EU assignment outputs unavailable"
+    }
+  }
+}
