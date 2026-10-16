@@ -16,7 +16,7 @@ records the loader that feeds them and the official C3 taxonomy that labels them
 `Rejection` for each feature of the layer, in fid order.
 
 `LUCAS_C3_LEVELS` holds three `TaxonomyLevel` maps: `main_category`, `second_level`,
-and `observed_code`. Each label is an official code. Each map is keyed on the 71
+and `observed_code`. Each label is an official code. Each map is keyed on the 74
 observed codes.
 
 The parser and the calculator do not change.
