@@ -1,0 +1,37 @@
+{
+  "asset": "l2022_survey_cop_radpoly_attr.gpkg",
+  "url": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/LUCAS/LUCAS_2022_Copernicus/l2022_survey_cop_radpoly_attr.gpkg",
+  "layer": "l2022_cop_radpoly_radqs_allatr_wcol",
+  "crs": "EPSG:3035",
+  "size_bytes": 1121144832,
+  "last_modified": "2024-06-26T20:19:25Z",
+  "etag": "42d35000-61bd0bb0d0770",
+  "sha256": "4d240c5710866f9549712685859a5051522b223f3e1fe580dcc9e398b68b037f",
+  "sha256_status": "verified from the downloaded official asset",
+  "metadata_source": "Official JRC GeoPackage bytes and metadata; SHA-256 and SQLite integrity verified 2026-10-15.",
+  "downloaded_copy": "data/raw/l2022_survey_cop_radpoly_attr.gpkg",
+  "source_verification": {
+    "bytes": 1121144832,
+    "integrity_check": "ok",
+    "feature_count": 137966,
+    "geometry_column": "geom",
+    "metadata_geometry_type": "MULTISURFACE",
+    "geometry_srs_id": 3035,
+    "observed_wkb_geometry_counts_in_attribute_candidates": {
+      "Polygon": 126522,
+      "MultiPolygon": 1
+    },
+    "attribute_candidate_count": 126523,
+    "positive_area_polygonal_candidate_count": 126516,
+    "zero_area_candidate_count": 7,
+    "invalid_geometry_candidate_count": 0,
+    "rtree": "rtree_l2022_cop_radpoly_radqs_allatr_wcol_geom",
+    "observed_survey_obs_type_to_official_code": {
+      "Field Survey, point visible <= 100 m": 1,
+      "Field Survey, point visible > 100 m": 2,
+      "Photo-interpretation in the field": 3
+    },
+    "survey_date_filter": null,
+    "survey_date_policy": "Do not exclude 2023 dates; retain source date values."
+  }
+}

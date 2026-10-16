@@ -1,0 +1,142 @@
+name: QA
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - run: uv sync --locked --all-groups
+      - run: uv run --locked coverage run --branch --source=src/osm_polygon_lucas -m pytest
+      - run: uv run --locked ruff check src tests tools
+      - run: uv run --locked ruff format --check src tests tools
+      - run: uv run --locked ty check src tests tools
+      - name: Enforce the per-function CRAP limit
+        run: |
+          uv run --locked coverage json --pretty-print -o "$RUNNER_TEMP/coverage.json"
+          uv run --locked radon cc --json src/osm_polygon_lucas > "$RUNNER_TEMP/radon.json"
+          uv run --locked python tools/check_crap.py "$RUNNER_TEMP/coverage.json" "$RUNNER_TEMP/radon.json" --max-crap 6
+      - run: uv run --locked mkdocs build --strict
+      - run: uv build
+      - name: Smoke-test the built wheel CLI
+        run: uv run --isolated --no-project --with dist/*.whl lucas-cover --help
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the runtime image
+        run: docker build --tag osm-polygon-lucas:ci .
+      - name: Smoke-test the container CLI
+        run: docker run --rm osm-polygon-lucas:ci --help
+
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - name: Run the complete mutation suite
+        run: uv run --locked mutmut run --max-children 2
+      - name: Export and validate mutation evidence
+        run: |
+          uv run --locked mutmut export-cicd-stats
+          uv run --locked mutmut results --all true > mutation-results.txt
+          uv run --locked python - <<'PY'
+          import json
+          import re
+          from collections import Counter
+          from pathlib import Path
+
+          stats = json.loads(Path("mutants/mutmut-cicd-stats.json").read_text(encoding="utf-8"))
+          required_fields = ("total", "killed", "survived", "no_tests", "skipped", "suspicious", "timeout", "check_was_interrupted_by_user", "segfault")
+          missing_fields = [field for field in required_fields if field not in stats]
+          if missing_fields:
+              raise SystemExit(f"Mutation summary is missing fields: {missing_fields}")
+          invalid_fields = [field for field in required_fields if not isinstance(stats[field], int) or isinstance(stats[field], bool) or stats[field] < 0]
+          if invalid_fields:
+              raise SystemExit(f"Mutation summary has invalid fields: {invalid_fields}")
+          if stats["total"] == 0:
+              raise SystemExit("Mutation run produced no mutants")
+          results = Path("mutation-results.txt").read_text(encoding="utf-8")
+          pattern = re.compile(r"^\s*[\w.]+: (killed|survived|no tests|skipped|suspicious|timeout|segfault|caught by type check|check was interrupted by user|not checked)\s*$")
+          statuses = []
+          for line in results.splitlines():
+              if line.strip():
+                  match = pattern.fullmatch(line)
+                  if match is None:
+                      raise SystemExit(f"Unrecognized mutation result row: {line!r}")
+                  statuses.append(match.group(1))
+          counts = Counter(status.replace(" ", "_") for status in statuses)
+          if len(statuses) != stats["total"]:
+              raise SystemExit(f"Mutation inventory mismatch: {len(statuses)} rows, stats total {stats['total']}")
+          for field in ("killed", "survived", "no_tests", "skipped", "suspicious", "timeout", "segfault"):
+              if counts[field] != stats[field]:
+                  raise SystemExit(f"Mutation {field} mismatch: rows={counts[field]}, stats={stats[field]}")
+          if counts["check_was_interrupted_by_user"] != stats["check_was_interrupted_by_user"]:
+              raise SystemExit("Mutation interruption row count does not match summary")
+          if stats["check_was_interrupted_by_user"] != 0:
+              raise SystemExit("Mutation run was interrupted")
+          incomplete = {field: counts[field] for field in ("no_tests", "skipped", "suspicious", "timeout", "segfault", "caught_by_type_check", "not_checked") if counts[field]}
+          if incomplete:
+              raise SystemExit(f"Mutation run has incomplete/non-verdict outcomes: {incomplete}")
+          score = 100 * stats["killed"] / stats["total"]
+          print(f"Complete mutation inventory: {stats['total']} mutants; {stats['killed']} killed; {stats['survived']} survived; score={score:.2f}%.")
+          print("Mutant outcomes are validated within the job; no mutation report artifact is uploaded.")
+          PY
+      - name: Show surviving mutant diffs for triage
+        shell: bash
+        run: |
+          awk '$2 == "survived" { sub(/:$/, "", $1); print $1 }' mutation-results.txt |
+          while IFS= read -r mutant; do
+            uv run --locked mutmut show "$mutant"
+          done
+      - name: Require triage for every mutation survivor
+        run: |
+          uv run --locked python - <<'PY'
+          import re
+          from pathlib import Path
+
+          result_lines = Path("mutation-results.txt").read_text(encoding="utf-8").splitlines()
+          survivor_pattern = re.compile(r"^\s*([\w.]+): survived\s*$")
+          survivor_ids = []
+          for line in result_lines:
+              match = survivor_pattern.fullmatch(line)
+              if match is not None:
+                  survivor_ids.append(match.group(1))
+
+          triage = Path("docs/quality/mutation-triage.md").read_text(encoding="utf-8")
+          triaged_ids = re.findall(r"^\| `([\w.]+)` \|", triage, flags=re.MULTILINE)
+          if len(triaged_ids) != len(set(triaged_ids)):
+              raise SystemExit("Mutation triage contains duplicate mutant IDs")
+          untriaged = sorted(set(survivor_ids) - set(triaged_ids))
+          stale = sorted(set(triaged_ids) - set(survivor_ids))
+          if untriaged or stale:
+              raise SystemExit(
+                  f"Mutation triage mismatch: untriaged={untriaged}, stale={stale}"
+              )
+          print(f"Triaged all {len(survivor_ids)} surviving mutant IDs.")
+          PY
