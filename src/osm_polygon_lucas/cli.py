@@ -239,10 +239,7 @@ def _write_output(
     if path == "-":
         sys.stdout.write(text)
     else:
-        try:
-            output_path = Path(path).resolve()
-        except RuntimeError as exc:
-            raise ValueError("output path contains a symlink loop") from exc
+        output_path = _resolved_output_path(path)
         for protected_path in protected_paths:
             if protected_path is None:
                 continue
@@ -251,36 +248,54 @@ def _write_output(
                 raise ValueError(
                     f"output path would overwrite input file: {protected_path}"
                 )
-        temporary_path: Path | None = None
-        temporary_fd: int | None = None
+        _write_output_atomically(output_path, text)
+
+
+def _resolved_output_path(path: str) -> Path:
+    try:
+        return Path(path).resolve()
+    except RuntimeError as exc:
+        raise ValueError("output path contains a symlink loop") from exc
+
+
+def _write_output_atomically(output_path: Path, text: str) -> None:
+    output_mode = _existing_output_mode(output_path)
+    temporary_path, temporary_fd = _create_temporary_output(output_path)
+    try:
+        _write_temporary_output(temporary_fd, text, output_mode)
+        os.replace(temporary_path, output_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _existing_output_mode(output_path: Path) -> int | None:
+    try:
+        return stat.S_IMODE(output_path.stat().st_mode)
+    except FileNotFoundError:
+        return None
+
+
+def _create_temporary_output(output_path: Path) -> tuple[Path, int]:
+    while True:
+        temporary_path = output_path.with_name(f".lucas-cover-{secrets.token_hex(8)}")
         try:
-            try:
-                output_mode = stat.S_IMODE(output_path.stat().st_mode)
-            except FileNotFoundError:
-                output_mode = None
-            while temporary_fd is None:
-                temporary_path = output_path.with_name(
-                    f".{output_path.name}.{secrets.token_hex(8)}"
-                )
-                try:
-                    temporary_fd = os.open(
-                        temporary_path,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                        0o666,
-                    )
-                except FileExistsError:
-                    continue
-            with os.fdopen(temporary_fd, "w", encoding="utf-8") as temporary:
-                temporary_fd = None
-                temporary.write(text)
-                if output_mode is not None:
-                    os.fchmod(temporary.fileno(), output_mode & ~0o6000)
-            os.replace(temporary_path, output_path)
-        finally:
-            if temporary_fd is not None:
-                os.close(temporary_fd)
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
+            temporary_fd = os.open(
+                temporary_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o666,
+            )
+            return temporary_path, temporary_fd
+        except FileExistsError:
+            continue
+
+
+def _write_temporary_output(
+    temporary_fd: int, text: str, output_mode: int | None
+) -> None:
+    with os.fdopen(temporary_fd, "w", encoding="utf-8") as temporary:
+        temporary.write(text)
+        if output_mode is not None:
+            os.fchmod(temporary.fileno(), output_mode & ~0o6000)
 
 
 def _paths_identify_same_file(first: Path, second: Path) -> bool:
