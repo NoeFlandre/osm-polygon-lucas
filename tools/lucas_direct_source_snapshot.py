@@ -188,7 +188,9 @@ def _website_text_units(
             raise ValueError("Website row references a missing geometry polygon")
         links = [polygon_id]
         for field, count_column in sentence_count_fields.items():
-            count = _sentence_count(row.get(count_column), count_column)
+            value = row.get(count_column)
+            # The pinned Website schema uses null for an absent optional field.
+            count = 0 if value is None else _sentence_count(value, count_column)
             for sentence_index in range(count):
                 yield {
                     "polygon_id": polygon_id,

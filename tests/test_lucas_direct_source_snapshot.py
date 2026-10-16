@@ -278,3 +278,39 @@ def test_direct_source_references_missing_geometry_are_rejected(
             list(_description_text_units(Path("unused"), set()))
         else:
             _wiki_document_links(Path("unused"), set())
+
+
+def test_website_null_sentence_count_means_optional_field_is_absent(monkeypatch):
+    monkeypatch.setattr(
+        census,
+        "_iter_parquet_rows",
+        lambda _path, _columns: iter(
+            [
+                {
+                    "polygon_id": "poly-7",
+                    "website_sentence_count": None,
+                    "contact_website_sentence_count": 1,
+                }
+            ]
+        ),
+    )
+
+    rows = list(
+        _website_text_units(
+            Path("unused"),
+            {"poly-7"},
+            {
+                "website": "website_sentence_count",
+                "contact_website": "contact_website_sentence_count",
+            },
+        )
+    )
+
+    assert rows == [
+        {
+            "polygon_id": "poly-7",
+            "field": "contact_website",
+            "sentence_index": 0,
+            "polygon_ids": ["poly-7"],
+        }
+    ]
