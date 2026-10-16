@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -161,24 +162,47 @@ def test_empty_wkt_error_is_specific(tmp_path):
     assert str(error.value) == "OSM WKT input is empty"
 
 
-def test_output_file_is_utf8_with_an_ascii_default_encoding(tmp_path, monkeypatch):
+def test_output_file_is_utf8(tmp_path):
     output_path = tmp_path / "coverage.json"
-    original_path = cli.Path
-
-    class AsciiDefaultPath:
-        def __init__(self, value):
-            self.path = original_path(value)
-
-        def write_text(self, text, encoding=None):
-            encoded = text.encode(encoding or "ascii")
-            return self.path.write_bytes(encoded)
-
-    monkeypatch.setattr(cli, "Path", AsciiDefaultPath)
     output = '{"label":"漢字"}\n'
 
     cli._write_output(str(output_path), output)
 
     assert output_path.read_bytes() == output.encode("utf-8")
+
+
+def test_output_file_uses_normal_creation_permissions(tmp_path):
+    output_path = tmp_path / "coverage.json"
+    original_umask = os.umask(0o027)
+    try:
+        cli._write_output(str(output_path), "report")
+    finally:
+        os.umask(original_umask)
+
+    assert output_path.stat().st_mode & 0o777 == 0o640
+
+
+def test_output_replacement_preserves_existing_permissions(tmp_path):
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+    output_path.chmod(0o640)
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+    assert output_path.stat().st_mode & 0o777 == 0o640
+
+
+def test_output_symlink_keeps_target_behavior(tmp_path):
+    target_path = tmp_path / "target.json"
+    target_path.write_text("old report", encoding="utf-8")
+    output_path = tmp_path / "coverage.json"
+    output_path.symlink_to(target_path)
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.is_symlink()
+    assert target_path.read_text(encoding="utf-8") == "new report"
 
 
 @pytest.mark.parametrize("input_option", ["--osm-wkt", "--lucas-gpkg"])
@@ -226,6 +250,54 @@ def test_output_rejects_hard_link_to_protected_input(tmp_path):
 
     assert input_path.read_bytes() == original
     assert output_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("alias_kind", ["symlink", "hard_link"])
+def test_output_does_not_follow_alias_added_after_input_check(
+    alias_kind, tmp_path, monkeypatch
+):
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    input_path = tmp_path / "osm.wkt"
+    input_path.write_text("POLYGON((0 0,10 0,10 10,0 10,0 0))", encoding="utf-8")
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+    original = input_path.read_bytes()
+    samefile = cli.Path.samefile
+
+    def add_alias_after_check(first, second):
+        result = samefile(first, second)
+        if first == output_path and second == input_path:
+            output_path.unlink()
+            if alias_kind == "symlink":
+                output_path.symlink_to(input_path)
+            else:
+                output_path.hardlink_to(input_path)
+        return result
+
+    monkeypatch.setattr(cli.Path, "samefile", add_alias_after_check)
+
+    assert (
+        main(
+            [
+                "--osm-wkt",
+                str(input_path),
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                str(gpkg_path),
+                "--output",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+
+    assert input_path.read_bytes() == original
+    assert json.loads(output_path.read_text(encoding="utf-8"))["schema"] == (
+        "lucas_polygon_coverage.v1"
+    )
 
 
 def test_output_allows_a_distinct_existing_target(tmp_path):
@@ -295,6 +367,66 @@ def test_cli_protects_a_geopackage_named_dash_when_wkt_comes_from_stdin(
     assert error.value.code == 2
     assert "would overwrite input file" in capsys.readouterr().err
     assert gpkg_path.read_bytes() == original
+
+
+def test_cli_allows_output_named_dash_when_wkt_comes_from_stdin(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    original = gpkg_path.read_bytes()
+    wkt = b"POLYGON((0 0,10 0,10 10,0 10,0 0))"
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(buffer=BytesIO(wkt)))
+
+    assert (
+        main(
+            [
+                "--osm-wkt",
+                "-",
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                str(gpkg_path),
+                "--output",
+                "./-",
+            ]
+        )
+        == 0
+    )
+
+    assert json.loads((tmp_path / "-").read_text(encoding="utf-8"))["schema"] == (
+        "lucas_polygon_coverage.v1"
+    )
+    assert gpkg_path.read_bytes() == original
+
+
+def test_cli_reports_an_output_symlink_loop_without_a_traceback(tmp_path, capsys):
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    wkt_path = tmp_path / "osm.wkt"
+    wkt_path.write_text("POLYGON((0 0,10 0,10 10,0 10,0 0))", encoding="utf-8")
+    output_path = tmp_path / "loop"
+    output_path.symlink_to(output_path.name)
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "--osm-wkt",
+                str(wkt_path),
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                str(gpkg_path),
+                "--output",
+                str(output_path),
+            ]
+        )
+
+    assert error.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "error:" in stderr
+    assert "Traceback" not in stderr
 
 
 def test_cli_requires_wkt_crs_and_geopackage_arguments(tmp_path):

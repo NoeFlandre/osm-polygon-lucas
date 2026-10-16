@@ -3,6 +3,9 @@
 import argparse
 import hashlib
 import json
+import os
+import secrets
+import stat
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -236,7 +239,10 @@ def _write_output(
     if path == "-":
         sys.stdout.write(text)
     else:
-        output_path = Path(path)
+        try:
+            output_path = Path(path).resolve()
+        except RuntimeError as exc:
+            raise ValueError("output path contains a symlink loop") from exc
         for protected_path in protected_paths:
             if protected_path is None:
                 continue
@@ -245,12 +251,44 @@ def _write_output(
                 raise ValueError(
                     f"output path would overwrite input file: {protected_path}"
                 )
-        output_path.write_text(text, encoding="utf-8")
+        temporary_path: Path | None = None
+        temporary_fd: int | None = None
+        try:
+            try:
+                output_mode = stat.S_IMODE(output_path.stat().st_mode)
+            except FileNotFoundError:
+                output_mode = None
+            while temporary_fd is None:
+                temporary_path = output_path.with_name(
+                    f".{output_path.name}.{secrets.token_hex(8)}"
+                )
+                try:
+                    temporary_fd = os.open(
+                        temporary_path,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        0o666,
+                    )
+                except FileExistsError:
+                    continue
+            with os.fdopen(temporary_fd, "w", encoding="utf-8") as temporary:
+                temporary_fd = None
+                temporary.write(text)
+                if output_mode is not None:
+                    os.fchmod(temporary.fileno(), output_mode & ~0o6000)
+            os.replace(temporary_path, output_path)
+        finally:
+            if temporary_fd is not None:
+                os.close(temporary_fd)
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
 
 def _paths_identify_same_file(first: Path, second: Path) -> bool:
-    if first.resolve() == second.resolve():
-        return True
+    try:
+        if first.resolve() == second.resolve():
+            return True
+    except RuntimeError as exc:
+        raise ValueError("output or input path contains a symlink loop") from exc
     try:
         return first.samefile(second)
     except FileNotFoundError:
