@@ -9,5 +9,7 @@ nav:
       - GeoPackage loader: adr/0002-lucas-gpkg-loader.md
       - CLI report: adr/0003-cli-report.md
   - Quality:
+      - Cohort method: quality/cohort-method.md
+      - Sentence evaluation readiness: quality/sentence-evaluation-readiness.md
       - Mutation environment: quality/mutation-environment.md
       - Mutation triage: quality/mutation-triage.md

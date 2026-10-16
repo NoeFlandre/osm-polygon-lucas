@@ -36,6 +36,12 @@ dev = [
     "ty",
 ]
 docs = ["mkdocs==1.6.1"]
+census = [
+    "pyarrow==25.0.1",
+    "pyproj==3.7.1; python_full_version < '3.12'",
+    "pyproj==3.8.0; python_full_version >= '3.12'",
+    "shapely==2.2.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
