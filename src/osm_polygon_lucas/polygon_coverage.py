@@ -151,13 +151,30 @@ def validate_osm_polygon(geometry: BaseGeometry) -> Polygon | MultiPolygon:
 def _overlapping_pairs(
     pieces: Sequence[BaseGeometry],
 ) -> tuple[tuple[int, int, float], ...]:
+    if len(pieces) < 2:
+        return ()
+
+    candidate_pairs = _candidate_overlap_pairs(pieces)
     pairs: list[tuple[int, int, float]] = []
-    for first, first_piece in enumerate(pieces):
-        for second in range(first + 1, len(pieces)):
-            area = first_piece.intersection(pieces[second]).area
-            if area > 0.0:
-                pairs.append((first, second, area))
+    for first, second in candidate_pairs:
+        area = pieces[first].intersection(pieces[second]).area
+        if area > 0.0:
+            pairs.append((first, second, area))
     return tuple(pairs)
+
+
+def _candidate_overlap_pairs(
+    pieces: Sequence[BaseGeometry],
+) -> tuple[tuple[int, int], ...]:
+    tree = shapely.STRtree(pieces)
+    indices = tree.query(pieces)
+    return tuple(
+        sorted(
+            (int(first), int(second))
+            for first, second in zip(indices[0], indices[1], strict=True)
+            if first < second
+        )
+    )
 
 
 def _decide_level(

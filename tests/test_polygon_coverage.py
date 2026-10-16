@@ -3,6 +3,7 @@ from math import nextafter
 
 import pytest
 from shapely.geometry import LineString, MultiPolygon, Polygon, box
+from shapely.geometry.base import BaseGeometry
 
 from osm_polygon_lucas import (
     Coordinates,
@@ -15,7 +16,11 @@ from osm_polygon_lucas import (
     assess_osm_polygon,
     validate_osm_polygon,
 )
-from osm_polygon_lucas.polygon_coverage import _group_by_label, _support_evidence
+from osm_polygon_lucas.polygon_coverage import (
+    _group_by_label,
+    _overlapping_pairs,
+    _support_evidence,
+)
 
 OSM = box(0.0, 0.0, 10.0, 10.0)
 COVER = TaxonomyLevel(name="cover", labels={"B11": "Cropland", "C10": "Woodland"})
@@ -98,6 +103,30 @@ def test_overlap_outside_the_osm_polygon_is_not_recorded(make_support):
     decision = assess_osm_polygon(OSM, supports, [COVER]).levels[0]
 
     assert decision.overlaps == ()
+
+
+def test_sparse_overlap_search_intersects_only_spatial_candidates(monkeypatch):
+    pieces = (
+        box(0.0, 0.0, 2.0, 2.0),
+        box(10.0, 0.0, 12.0, 2.0),
+        box(1.0, 1.0, 3.0, 3.0),
+        box(11.0, 1.0, 13.0, 3.0),
+        box(50.0, 50.0, 51.0, 51.0),
+    )
+    original_intersection = BaseGeometry.intersection
+    intersection_count = 0
+
+    def count_intersection(
+        self: BaseGeometry, other: BaseGeometry
+    ) -> BaseGeometry:
+        nonlocal intersection_count
+        intersection_count += 1
+        return original_intersection(self, other)
+
+    monkeypatch.setattr(BaseGeometry, "intersection", count_intersection)
+
+    assert _overlapping_pairs(pieces) == ((0, 2, 1.0), (1, 3, 1.0))
+    assert intersection_count == 2
 
 
 def test_subsquare_unit_positive_overlap_is_retained(make_support):

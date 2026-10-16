@@ -1,0 +1,11 @@
+*
+!README.md
+!pyproject.toml
+!uv.lock
+!MANIFEST.in
+!mkdocs.yml
+!Dockerfile
+!src/
+!src/osm_polygon_lucas/
+!src/osm_polygon_lucas/*.py
+!src/osm_polygon_lucas/*.json

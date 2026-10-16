@@ -4,6 +4,7 @@
 !/.python-version
 !/README.md
 !/Dockerfile
+!/.dockerignore
 !/MANIFEST.in
 !/mkdocs.yml
 !/pyproject.toml
