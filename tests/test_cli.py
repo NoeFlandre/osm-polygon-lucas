@@ -181,6 +181,74 @@ def test_output_file_is_utf8_with_an_ascii_default_encoding(tmp_path, monkeypatc
     assert output_path.read_bytes() == output.encode("utf-8")
 
 
+@pytest.mark.parametrize("input_option", ["--osm-wkt", "--lucas-gpkg"])
+def test_cli_rejects_output_that_would_overwrite_an_input(
+    input_option, tmp_path, capsys
+):
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    wkt_path = tmp_path / "osm.wkt"
+    wkt_path.write_text("POLYGON((0 0,10 0,10 10,0 10,0 0))", encoding="utf-8")
+    input_path = wkt_path if input_option == "--osm-wkt" else gpkg_path
+    original = input_path.read_bytes()
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "--osm-wkt",
+                str(wkt_path),
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                str(gpkg_path),
+                "--output",
+                str(input_path),
+            ]
+        )
+
+    assert error.value.code == 2
+    assert "would overwrite input file" in capsys.readouterr().err
+    assert input_path.read_bytes() == original
+
+
+def test_output_rejects_hard_link_to_protected_input(tmp_path):
+    input_path = tmp_path / "input.wkt"
+    input_path.write_bytes(b"POLYGON((0 0,1 0,1 1,0 1,0 0))")
+    output_path = tmp_path / "output.wkt"
+    output_path.hardlink_to(input_path)
+    original = input_path.read_bytes()
+
+    with pytest.raises(ValueError, match="would overwrite input file"):
+        cli._write_output(
+            str(output_path), "replacement", protected_paths=(str(input_path),)
+        )
+
+    assert input_path.read_bytes() == original
+    assert output_path.read_bytes() == original
+
+
+def test_output_allows_a_distinct_existing_target(tmp_path):
+    input_path = tmp_path / "input.wkt"
+    input_path.write_text("source", encoding="utf-8")
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+
+    cli._write_output(
+        str(output_path), "new report", protected_paths=(str(input_path),)
+    )
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+
+
+def test_output_file_skips_standard_input_in_protected_paths(tmp_path):
+    output_path = tmp_path / "coverage.json"
+
+    cli._write_output(str(output_path), "report", protected_paths=("-",))
+
+    assert output_path.read_text(encoding="utf-8") == "report"
+
+
 def test_cli_requires_wkt_crs_and_geopackage_arguments(tmp_path):
     gpkg_path = write_lucas_gpkg(
         tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]

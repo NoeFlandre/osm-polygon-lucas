@@ -42,7 +42,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         output = _report_text(args)
-        _write_output(args.output, output)
+        _write_output(
+            args.output,
+            output,
+            protected_paths=(args.osm_wkt, args.lucas_gpkg),
+        )
     except (OSError, ValueError, ShapelyError) as exc:
         parser.error(str(exc))
     return 0
@@ -223,8 +227,28 @@ def _level_record(level: LevelDecision) -> dict[str, Any]:
     }
 
 
-def _write_output(path: str, text: str) -> None:
+def _write_output(
+    path: str, text: str, *, protected_paths: Sequence[str] = ()
+) -> None:
     if path == "-":
         sys.stdout.write(text)
     else:
-        Path(path).write_text(text, encoding="utf-8")
+        output_path = Path(path)
+        for protected_path in protected_paths:
+            if protected_path == "-":
+                continue
+            input_path = Path(protected_path)
+            if _paths_identify_same_file(output_path, input_path):
+                raise ValueError(
+                    f"output path would overwrite input file: {protected_path}"
+                )
+        output_path.write_text(text, encoding="utf-8")
+
+
+def _paths_identify_same_file(first: Path, second: Path) -> bool:
+    if first.resolve() == second.resolve():
+        return True
+    try:
+        return first.samefile(second)
+    except FileNotFoundError:
+        return False

@@ -34,6 +34,8 @@ The JSON document uses schema name `lucas_polygon_coverage.v1`. Its output inclu
 The JSON includes no timestamp or local file path. It labels the manifest digest as
 `expected_sha256` and sets `sha256_verification` to `not_performed_by_cli`. It does
 not hash the user-supplied GeoPackage during each run.
+When a file output is requested, the CLI rejects output paths that resolve to or
+identify either input file, including symlink and hard-link aliases.
 The CLI applies the approved direct floating comparison `fraction >= 0.80`; it does
 not apply a ULP tolerance. Same-class geometries are unioned before measurement, and
 multiple classes at the gate produce an ambiguous result.
