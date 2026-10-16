@@ -250,7 +250,7 @@ def test_output_file_checks_sources_after_standard_input_marker(tmp_path):
         cli._write_output(
             str(input_path),
             "report",
-            protected_paths=("-", str(input_path)),
+            protected_paths=(None, str(input_path)),
         )
 
     assert input_path.read_bytes() == original
@@ -262,9 +262,39 @@ def test_output_path_named_dash_is_allowed_when_stdin_is_an_input(
     monkeypatch.chdir(tmp_path)
     output_path = tmp_path / "-"
 
-    cli._write_output("./-", "report", protected_paths=("-",))
+    cli._write_output("./-", "report", protected_paths=(None,))
 
     assert output_path.read_text(encoding="utf-8") == "report"
+
+
+def test_cli_protects_a_geopackage_named_dash_when_wkt_comes_from_stdin(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "-", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    original = gpkg_path.read_bytes()
+    wkt = b"POLYGON((0 0,10 0,10 10,0 10,0 0))"
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(buffer=BytesIO(wkt)))
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "--osm-wkt",
+                "-",
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                "-",
+                "--output",
+                "./-",
+            ]
+        )
+
+    assert error.value.code == 2
+    assert "would overwrite input file" in capsys.readouterr().err
+    assert gpkg_path.read_bytes() == original
 
 
 def test_cli_requires_wkt_crs_and_geopackage_arguments(tmp_path):

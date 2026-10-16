@@ -45,7 +45,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_output(
             args.output,
             output,
-            protected_paths=(args.osm_wkt, args.lucas_gpkg),
+            protected_paths=(
+                None if args.osm_wkt == "-" else args.osm_wkt,
+                args.lucas_gpkg,
+            ),
         )
     except (OSError, ValueError, ShapelyError) as exc:
         parser.error(str(exc))
@@ -227,13 +230,15 @@ def _level_record(level: LevelDecision) -> dict[str, Any]:
     }
 
 
-def _write_output(path: str, text: str, *, protected_paths: Sequence[str] = ()) -> None:
+def _write_output(
+    path: str, text: str, *, protected_paths: Sequence[str | None] = ()
+) -> None:
     if path == "-":
         sys.stdout.write(text)
     else:
         output_path = Path(path)
         for protected_path in protected_paths:
-            if protected_path == "-":
+            if protected_path is None:
                 continue
             input_path = Path(protected_path)
             if _paths_identify_same_file(output_path, input_path):
