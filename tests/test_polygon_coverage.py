@@ -116,9 +116,7 @@ def test_sparse_overlap_search_intersects_only_spatial_candidates(monkeypatch):
     original_intersection = BaseGeometry.intersection
     intersection_count = 0
 
-    def count_intersection(
-        self: BaseGeometry, other: BaseGeometry
-    ) -> BaseGeometry:
+    def count_intersection(self: BaseGeometry, other: BaseGeometry) -> BaseGeometry:
         nonlocal intersection_count
         intersection_count += 1
         return original_intersection(self, other)

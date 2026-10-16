@@ -24,6 +24,9 @@ The mutation job compares every surviving mutant ID against this table. An undoc
 | `osm_polygon_lucas.lucas_gpkg.x__select_rows__mutmut_13` | SQLite resolves SQL keywords and unquoted identifiers without regard to case. Bound values are unchanged. |
 | `osm_polygon_lucas.lucas_gpkg.x__wkb_order__mutmut_14` | For supported WKB types 1-7, byte 1 is nonzero for little-endian and zero for big-endian, so this test selects the same byte order as the marker at byte 0. |
 | `osm_polygon_lucas.support_eligibility.x_classify_support_row__mutmut_67` | A non-string support class adds a rejection reason, and a missing polygon adds a geometry reason. The final type and polygon checks cannot change the result after those checks. |
+| `osm_polygon_lucas.polygon_coverage.x__candidate_overlap_pairs__mutmut_11` | For array input, Shapely returns a `(2, n)` index matrix. Both `zip` inputs therefore have length `n`, so changing `strict` cannot change valid query results. |
+| `osm_polygon_lucas.polygon_coverage.x__candidate_overlap_pairs__mutmut_14` | For array input, Shapely returns a `(2, n)` index matrix. Both `zip` inputs therefore have length `n`, so changing `strict` cannot change valid query results. |
+| `osm_polygon_lucas.polygon_coverage.x__candidate_overlap_pairs__mutmut_17` | For array input, Shapely returns a `(2, n)` index matrix. Both `zip` inputs therefore have length `n`, so changing `strict` cannot change valid query results. |
 
 ## Historical preserved run status
 
