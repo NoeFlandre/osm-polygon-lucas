@@ -193,6 +193,18 @@ def test_output_replacement_preserves_existing_permissions(tmp_path):
     assert output_path.stat().st_mode & 0o777 == 0o640
 
 
+def test_output_permissions_work_without_fchmod(tmp_path, monkeypatch):
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+    output_path.chmod(0o640)
+    monkeypatch.setattr(cli.os, "fchmod", None, raising=False)
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+    assert output_path.stat().st_mode & 0o777 == 0o640
+
+
 def test_output_symlink_keeps_target_behavior(tmp_path):
     target_path = tmp_path / "target.json"
     target_path.write_text("old report", encoding="utf-8")

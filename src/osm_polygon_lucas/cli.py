@@ -260,9 +260,14 @@ def _resolved_output_path(path: str) -> Path:
 
 def _write_output_atomically(output_path: Path, text: str) -> None:
     output_mode = _existing_output_mode(output_path)
-    temporary_path, temporary_fd = _create_temporary_output(output_path)
+    temporary_path, temporary_fd, creation_mode = _create_temporary_output(output_path)
     try:
-        _write_temporary_output(temporary_fd, text, output_mode)
+        _write_temporary_output(
+            temporary_path,
+            temporary_fd,
+            text,
+            creation_mode if output_mode is None else output_mode & ~0o6000,
+        )
         os.replace(temporary_path, output_path)
     finally:
         temporary_path.unlink(missing_ok=True)
@@ -275,7 +280,7 @@ def _existing_output_mode(output_path: Path) -> int | None:
         return None
 
 
-def _create_temporary_output(output_path: Path) -> tuple[Path, int]:
+def _create_temporary_output(output_path: Path) -> tuple[Path, int, int]:
     while True:
         temporary_path = output_path.with_name(f".lucas-cover-{secrets.token_hex(8)}")
         try:
@@ -284,18 +289,27 @@ def _create_temporary_output(output_path: Path) -> tuple[Path, int]:
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                 0o666,
             )
-            return temporary_path, temporary_fd
+            creation_mode = stat.S_IMODE(os.fstat(temporary_fd).st_mode)
+            return temporary_path, temporary_fd, creation_mode
         except FileExistsError:
             continue
 
 
 def _write_temporary_output(
-    temporary_fd: int, text: str, output_mode: int | None
+    temporary_path: Path, temporary_fd: int, text: str, output_mode: int
 ) -> None:
     with os.fdopen(temporary_fd, "w", encoding="utf-8") as temporary:
+        _set_output_file_mode(temporary_path, temporary.fileno(), 0o600)
         temporary.write(text)
-        if output_mode is not None:
-            os.fchmod(temporary.fileno(), output_mode & ~0o6000)
+        _set_output_file_mode(temporary_path, temporary.fileno(), output_mode)
+
+
+def _set_output_file_mode(path: Path, file_descriptor: int, mode: int) -> None:
+    fchmod = getattr(os, "fchmod", None)
+    if fchmod is None:
+        os.chmod(path, mode)
+    else:
+        fchmod(file_descriptor, mode)
 
 
 def _paths_identify_same_file(first: Path, second: Path) -> bool:
