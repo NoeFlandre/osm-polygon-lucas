@@ -4,12 +4,13 @@ import argparse
 import hashlib
 import json
 import sys
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import shapely
 from shapely.errors import ShapelyError
@@ -42,7 +43,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         output = _report_text(args)
-        _write_output(args.output, output)
+        _write_output(
+            args.output,
+            output,
+            protected_paths=(
+                None if args.osm_wkt == "-" else args.osm_wkt,
+                args.lucas_gpkg,
+            ),
+        )
     except (OSError, ValueError, ShapelyError) as exc:
         parser.error(str(exc))
     return 0
@@ -223,8 +231,107 @@ def _level_record(level: LevelDecision) -> dict[str, Any]:
     }
 
 
-def _write_output(path: str, text: str) -> None:
+def _write_output(
+    path: str, text: str, *, protected_paths: Sequence[str | None] = ()
+) -> None:
     if path == "-":
         sys.stdout.write(text)
     else:
-        Path(path).write_text(text, encoding="utf-8")
+        output_path = _resolved_output_path(path)
+        for protected_path in protected_paths:
+            if protected_path is None:
+                continue
+            input_path = Path(protected_path)
+            if _paths_identify_same_file(output_path, input_path):
+                raise ValueError(
+                    f"output path would overwrite input file: {protected_path}"
+                )
+        _write_output_atomically(output_path, text)
+
+
+def _resolved_output_path(path: str) -> Path:
+    try:
+        return Path(path).resolve()
+    except RuntimeError as exc:
+        raise ValueError("output path contains a symlink loop") from exc
+
+
+def _write_output_atomically(output_path: Path, text: str) -> None:
+    output_mode = _existing_output_mode(output_path)
+    temporary_directory, temporary_path, temporary_file, creation_mode = (
+        _create_temporary_output(output_path)
+    )
+    try:
+        _write_temporary_output(
+            temporary_path,
+            temporary_file,
+            text,
+            creation_mode if output_mode is None else output_mode,
+        )
+        temporary_path.replace(output_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+        temporary_directory.rmdir()
+
+
+def _existing_output_mode(output_path: Path) -> int | None:
+    try:
+        return output_path.stat().st_mode & 0o777
+    except FileNotFoundError:
+        return None
+
+
+def _create_temporary_output(
+    output_path: Path,
+) -> tuple[Path, Path, TextIO, int]:
+    temporary_directory = _create_temporary_directory(output_path)
+    temporary_path = temporary_directory / "report"
+    temporary_file: TextIO | None = None
+    try:
+        temporary_file = temporary_path.open("x", encoding="utf-8")
+        creation_mode = temporary_path.stat().st_mode & 0o777
+    except BaseException:
+        if temporary_file is not None:
+            temporary_file.close()
+            temporary_path.unlink(missing_ok=True)
+        temporary_directory.rmdir()
+        raise
+    return temporary_directory, temporary_path, temporary_file, creation_mode
+
+
+def _create_temporary_directory(output_path: Path) -> Path:
+    temporary_directory = Path(
+        tempfile.mkdtemp(prefix=".lucas-cover-", dir=output_path.parent)
+    )
+    try:
+        if _paths_identify_same_file(temporary_directory, output_path):
+            raise FileExistsError("temporary directory would collide with output path")
+    except BaseException:
+        temporary_directory.rmdir()
+        raise
+    return temporary_directory
+
+
+def _write_temporary_output(
+    temporary_path: Path,
+    temporary_file: TextIO,
+    text: str,
+    output_mode: int,
+) -> None:
+    with temporary_file:
+        temporary_path.chmod(0o600)
+        temporary_file.write(text)
+        temporary_file.flush()
+        temporary_path.chmod(output_mode)
+
+
+def _paths_identify_same_file(first: Path, second: Path) -> bool:
+    try:
+        if first.resolve() == second.resolve():
+            return True
+    except RuntimeError as exc:
+        raise ValueError("output or input path contains a symlink loop") from exc
+    try:
+        return first.samefile(second)
+    except FileNotFoundError:
+        return False

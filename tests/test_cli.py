@@ -1,6 +1,7 @@
 import hashlib
 import json
-from io import BytesIO
+import os
+from io import BytesIO, StringIO
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,8 @@ from shapely.geometry import Polygon, box
 
 from osm_polygon_lucas import cli
 from osm_polygon_lucas.cli import main
+
+WINDOWS = cli.sys.platform == "win32"
 
 
 def test_cli_emits_deterministic_json_with_source_and_all_point_evidence(
@@ -161,24 +164,477 @@ def test_empty_wkt_error_is_specific(tmp_path):
     assert str(error.value) == "OSM WKT input is empty"
 
 
-def test_output_file_is_utf8_with_an_ascii_default_encoding(tmp_path, monkeypatch):
+def test_output_file_is_utf8(tmp_path):
     output_path = tmp_path / "coverage.json"
-    original_path = cli.Path
-
-    class AsciiDefaultPath:
-        def __init__(self, value):
-            self.path = original_path(value)
-
-        def write_text(self, text, encoding=None):
-            encoded = text.encode(encoding or "ascii")
-            return self.path.write_bytes(encoded)
-
-    monkeypatch.setattr(cli, "Path", AsciiDefaultPath)
     output = '{"label":"漢字"}\n'
 
     cli._write_output(str(output_path), output)
 
     assert output_path.read_bytes() == output.encode("utf-8")
+
+
+def test_temporary_output_opens_with_explicit_utf8_encoding(tmp_path, monkeypatch):
+    output_path = tmp_path / "coverage.json"
+    original_open = cli.Path.open
+    encodings = []
+
+    def recording_open(path, *args, **kwargs):
+        encodings.append(kwargs.get("encoding"))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli.Path, "open", recording_open)
+
+    cli._write_output(str(output_path), "report")
+
+    assert encodings == ["utf-8"]
+
+
+@pytest.mark.skipif(WINDOWS, reason="POSIX permission bits are not Windows ACLs")
+def test_output_file_uses_normal_creation_permissions(tmp_path):
+    output_path = tmp_path / "coverage.json"
+    original_umask = os.umask(0o027)
+    try:
+        cli._write_output(str(output_path), "report")
+    finally:
+        os.umask(original_umask)
+
+    assert output_path.stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.skipif(WINDOWS, reason="POSIX permission bits are not Windows ACLs")
+def test_output_replacement_preserves_existing_permissions(tmp_path):
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+    output_path.chmod(0o640)
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+    assert output_path.stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.skipif(WINDOWS, reason="POSIX permission bits are not Windows ACLs")
+def test_output_replacement_preserves_executable_permissions(tmp_path):
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+    output_path.chmod(0o751)
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+    assert output_path.stat().st_mode & 0o777 == 0o751
+
+
+def test_output_leaves_existing_temporary_directory_like_path_untouched(tmp_path):
+    collision_directory = tmp_path / ".lucas-cover-0"
+    collision_directory.mkdir()
+    marker_path = collision_directory / "keep"
+    marker_path.write_text("pre-existing", encoding="utf-8")
+    output_path = tmp_path / "coverage.json"
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+    assert marker_path.read_text(encoding="utf-8") == "pre-existing"
+    assert set(tmp_path.glob(".lucas-cover-*")) == {collision_directory}
+
+
+def test_output_can_use_a_temporary_directory_like_name(tmp_path):
+    output_path = tmp_path / ".lucas-cover-0"
+
+    cli._write_output(str(output_path), "report")
+
+    assert output_path.is_file()
+    assert output_path.read_text(encoding="utf-8") == "report"
+    assert set(tmp_path.glob(".lucas-cover-*")) == {output_path}
+
+
+def test_output_can_use_a_case_variant_of_a_temporary_directory_name(tmp_path):
+    output_path = tmp_path / ".LUCAS-COVER-0"
+
+    cli._write_output(str(output_path), "report")
+
+    assert output_path.is_file()
+    assert output_path.read_text(encoding="utf-8") == "report"
+
+
+@pytest.mark.parametrize("failure_point", ["open", "stat"])
+def test_temporary_output_creation_failure_cleans_partial_state(
+    failure_point, tmp_path, monkeypatch
+):
+    original_open = cli.Path.open
+    original_stat = cli.Path.stat
+
+    def failing_open(path, *args, **kwargs):
+        if failure_point == "open" and path.name == "report":
+            raise OSError("injected open failure")
+        return original_open(path, *args, **kwargs)
+
+    def failing_stat(path, *args, **kwargs):
+        if failure_point == "stat" and path.name == "report":
+            raise OSError("injected stat failure")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli.Path, "open", failing_open)
+    monkeypatch.setattr(cli.Path, "stat", failing_stat)
+
+    with pytest.raises(OSError, match=f"injected {failure_point} failure"):
+        cli._create_temporary_output(tmp_path / "coverage.json")
+
+    assert not list(tmp_path.glob(".lucas-cover-*"))
+
+
+def test_temporary_output_cleanup_tolerates_a_missing_report_path(
+    tmp_path, monkeypatch
+):
+    original_stat = cli.Path.stat
+
+    def open_without_creating_path(path, *args, **kwargs):
+        return StringIO()
+
+    def failing_stat(path, *args, **kwargs):
+        if path.name == "report":
+            raise OSError("injected stat failure with missing report path")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli.Path, "open", open_without_creating_path)
+    monkeypatch.setattr(cli.Path, "stat", failing_stat)
+
+    with pytest.raises(OSError, match="injected stat failure with missing report path"):
+        cli._create_temporary_output(tmp_path / "coverage.json")
+
+    assert not list(tmp_path.glob(".lucas-cover-*"))
+
+
+def test_temporary_output_is_writable_before_report_write(tmp_path, monkeypatch):
+    temporary_path = tmp_path / "report"
+    temporary_file = temporary_path.open("x", encoding="utf-8")
+    chmod_modes = []
+    original_chmod = cli.Path.chmod
+
+    def recording_chmod(path, mode, *args, **kwargs):
+        chmod_modes.append(mode)
+        return original_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(cli.Path, "chmod", recording_chmod)
+
+    cli._write_temporary_output(
+        temporary_path, temporary_file, "new report", output_mode=0o640
+    )
+
+    assert chmod_modes == [0o600, 0o640]
+    assert temporary_path.read_text(encoding="utf-8") == "new report"
+
+
+def test_temporary_directory_uses_destination_parent(tmp_path):
+    destination_parent = tmp_path / "output"
+    destination_parent.mkdir()
+    output_path = destination_parent / "report"
+
+    temporary_directory, temporary_path, temporary_file, _ = (
+        cli._create_temporary_output(output_path)
+    )
+    try:
+        assert temporary_directory.parent == destination_parent
+        assert temporary_path.parent == temporary_directory
+    finally:
+        temporary_file.close()
+        temporary_path.unlink(missing_ok=True)
+        temporary_directory.rmdir()
+
+
+def test_temporary_directory_uses_a_dot_prefixed_name(tmp_path, monkeypatch):
+    output_path = tmp_path / "coverage.json"
+    prefixes = []
+    original_mkdtemp = cli.tempfile.mkdtemp
+
+    def recording_mkdtemp(*, prefix, dir):
+        prefixes.append(prefix)
+        return original_mkdtemp(prefix=prefix, dir=dir)
+
+    monkeypatch.setattr(cli.tempfile, "mkdtemp", recording_mkdtemp)
+    temporary_directory = cli._create_temporary_directory(output_path)
+    temporary_directory.rmdir()
+
+    assert prefixes[0].startswith(".")
+
+
+def test_case_insensitive_temporary_directory_collision_is_cleaned(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / ".LUCAS-COVER-0"
+    temporary_path = tmp_path / ".lucas-cover-0"
+    original_samefile = cli.Path.samefile
+
+    def create_temporary_directory(*, prefix, dir):
+        temporary_path.mkdir()
+        return str(temporary_path)
+
+    def case_insensitive_samefile(path, other):
+        if (
+            path.parent == other.parent
+            and path.name.casefold() == other.name.casefold()
+        ):
+            return True
+        return original_samefile(path, other)
+
+    monkeypatch.setattr(cli.tempfile, "mkdtemp", create_temporary_directory)
+    monkeypatch.setattr(cli.Path, "samefile", case_insensitive_samefile)
+
+    with pytest.raises(FileExistsError) as error:
+        cli._create_temporary_directory(output_path)
+
+    assert str(error.value) == "temporary directory would collide with output path"
+    assert not temporary_path.exists()
+    assert not output_path.exists()
+
+
+def test_output_symlink_keeps_target_behavior(tmp_path):
+    target_path = tmp_path / "target.json"
+    target_path.write_text("old report", encoding="utf-8")
+    output_path = tmp_path / "coverage.json"
+    output_path.symlink_to(target_path)
+
+    cli._write_output(str(output_path), "new report")
+
+    assert output_path.is_symlink()
+    assert target_path.read_text(encoding="utf-8") == "new report"
+
+
+@pytest.mark.parametrize("input_option", ["--osm-wkt", "--lucas-gpkg"])
+def test_cli_rejects_output_that_would_overwrite_an_input(
+    input_option, tmp_path, capsys
+):
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    wkt_path = tmp_path / "osm.wkt"
+    wkt_path.write_text("POLYGON((0 0,10 0,10 10,0 10,0 0))", encoding="utf-8")
+    input_path = wkt_path if input_option == "--osm-wkt" else gpkg_path
+    original = input_path.read_bytes()
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "--osm-wkt",
+                str(wkt_path),
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                str(gpkg_path),
+                "--output",
+                str(input_path),
+            ]
+        )
+
+    assert error.value.code == 2
+    assert "would overwrite input file" in capsys.readouterr().err
+    assert input_path.read_bytes() == original
+
+
+def test_output_rejects_hard_link_to_protected_input(tmp_path):
+    input_path = tmp_path / "input.wkt"
+    input_path.write_bytes(b"POLYGON((0 0,1 0,1 1,0 1,0 0))")
+    output_path = tmp_path / "output.wkt"
+    output_path.hardlink_to(input_path)
+    original = input_path.read_bytes()
+
+    with pytest.raises(ValueError, match="would overwrite input file"):
+        cli._write_output(
+            str(output_path), "replacement", protected_paths=(str(input_path),)
+        )
+
+    assert input_path.read_bytes() == original
+    assert output_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("alias_kind", ["symlink", "hard_link"])
+def test_output_does_not_follow_alias_added_after_input_check(
+    alias_kind, tmp_path, monkeypatch
+):
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    input_path = tmp_path / "osm.wkt"
+    input_path.write_text("POLYGON((0 0,10 0,10 10,0 10,0 0))", encoding="utf-8")
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+    original = input_path.read_bytes()
+    samefile = cli.Path.samefile
+
+    def add_alias_after_check(first, second):
+        result = samefile(first, second)
+        if first == output_path and second == input_path:
+            output_path.unlink()
+            if alias_kind == "symlink":
+                output_path.symlink_to(input_path)
+            else:
+                output_path.hardlink_to(input_path)
+        return result
+
+    monkeypatch.setattr(cli.Path, "samefile", add_alias_after_check)
+
+    assert (
+        main(
+            [
+                "--osm-wkt",
+                str(input_path),
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                str(gpkg_path),
+                "--output",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+
+    assert input_path.read_bytes() == original
+    assert json.loads(output_path.read_text(encoding="utf-8"))["schema"] == (
+        "lucas_polygon_coverage.v1"
+    )
+
+
+def test_output_allows_a_distinct_existing_target(tmp_path):
+    input_path = tmp_path / "input.wkt"
+    input_path.write_text("source", encoding="utf-8")
+    output_path = tmp_path / "coverage.json"
+    output_path.write_text("old report", encoding="utf-8")
+
+    cli._write_output(
+        str(output_path), "new report", protected_paths=(str(input_path),)
+    )
+
+    assert output_path.read_text(encoding="utf-8") == "new report"
+
+
+def test_output_file_checks_sources_after_standard_input_marker(tmp_path):
+    input_path = tmp_path / "synthetic.gpkg"
+    input_path.write_bytes(b"GeoPackage")
+    original = input_path.read_bytes()
+
+    with pytest.raises(ValueError, match="would overwrite input file"):
+        cli._write_output(
+            str(input_path),
+            "report",
+            protected_paths=(None, str(input_path)),
+        )
+
+    assert input_path.read_bytes() == original
+
+
+def test_output_path_named_dash_is_allowed_when_stdin_is_an_input(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    output_path = tmp_path / "-"
+
+    cli._write_output("./-", "report", protected_paths=(None,))
+
+    assert output_path.read_text(encoding="utf-8") == "report"
+
+
+def test_cli_protects_a_geopackage_named_dash_when_wkt_comes_from_stdin(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "-", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    original = gpkg_path.read_bytes()
+    wkt = b"POLYGON((0 0,10 0,10 10,0 10,0 0))"
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(buffer=BytesIO(wkt)))
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "--osm-wkt",
+                "-",
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                "-",
+                "--output",
+                "./-",
+            ]
+        )
+
+    assert error.value.code == 2
+    assert "would overwrite input file" in capsys.readouterr().err
+    assert gpkg_path.read_bytes() == original
+
+
+def test_cli_allows_output_named_dash_when_wkt_comes_from_stdin(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    original = gpkg_path.read_bytes()
+    wkt = b"POLYGON((0 0,10 0,10 10,0 10,0 0))"
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(buffer=BytesIO(wkt)))
+
+    assert (
+        main(
+            [
+                "--osm-wkt",
+                "-",
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                str(gpkg_path),
+                "--output",
+                "./-",
+            ]
+        )
+        == 0
+    )
+
+    assert json.loads((tmp_path / "-").read_text(encoding="utf-8"))["schema"] == (
+        "lucas_polygon_coverage.v1"
+    )
+    assert gpkg_path.read_bytes() == original
+
+
+def test_cli_reports_an_output_symlink_loop_without_a_traceback(tmp_path, capsys):
+    gpkg_path = write_lucas_gpkg(
+        tmp_path / "synthetic.gpkg", [feature(12, box(0.0, 0.0, 10.0, 10.0))]
+    )
+    wkt_path = tmp_path / "osm.wkt"
+    wkt_path.write_text("POLYGON((0 0,10 0,10 10,0 10,0 0))", encoding="utf-8")
+    output_path = tmp_path / "loop"
+    output_path.symlink_to(output_path.name)
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "--osm-wkt",
+                str(wkt_path),
+                "--osm-crs",
+                "EPSG:3035",
+                "--lucas-gpkg",
+                str(gpkg_path),
+                "--output",
+                str(output_path),
+            ]
+        )
+
+    assert error.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "error:" in stderr
+    assert stderr.endswith("error: output path contains a symlink loop\n")
+    assert "Traceback" not in stderr
+
+
+def test_input_alias_check_reports_a_symlink_loop(tmp_path):
+    output_path = tmp_path / "coverage.json"
+    loop_path = tmp_path / "loop"
+    loop_path.symlink_to(loop_path.name)
+
+    with pytest.raises(
+        ValueError, match="^output or input path contains a symlink loop$"
+    ):
+        cli._paths_identify_same_file(output_path, loop_path)
 
 
 def test_cli_requires_wkt_crs_and_geopackage_arguments(tmp_path):

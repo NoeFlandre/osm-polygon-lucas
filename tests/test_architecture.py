@@ -14,6 +14,7 @@ ALLOWED_STDLIB = {
     "json",
     "pathlib",
     "sys",
+    "tempfile",
     "math",
     "numbers",
     "types",

@@ -34,6 +34,15 @@ The JSON document uses schema name `lucas_polygon_coverage.v1`. Its output inclu
 The JSON includes no timestamp or local file path. It labels the manifest digest as
 `expected_sha256` and sets `sha256_verification` to `not_performed_by_cli`. It does
 not hash the user-supplied GeoPackage during each run.
+When a file output is requested, the CLI rejects output paths that resolve to or
+identify either input file, including symlink and hard-link aliases.
+It writes inside a temporary directory beneath the destination directory, then
+atomically replaces the destination's final directory entry. On POSIX, the temporary
+directory has mode `0700`. On Windows, it inherits the destination directory's ACL.
+A late symlink or hard-link swap at the destination's final entry is replaced as an
+entry rather than followed to overwrite an input. The CLI preserves an existing
+report's POSIX mode bits, but it does not copy file-specific ACL entries. On Windows,
+`Path.chmod` does not copy ACL entries from the existing report.
 The CLI applies the approved direct floating comparison `fraction >= 0.80`; it does
 not apply a ULP tolerance. Same-class geometries are unioned before measurement, and
 multiple classes at the gate produce an ambiguous result.
