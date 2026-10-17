@@ -88,6 +88,16 @@ def test_same_main_category_keeps_unique_polygon_and_reports_all_observation_mod
     assert (decision.anchor_longitude, decision.anchor_latitude) == (1.0, 1.0)
 
 
+def test_decision_anchor_preserves_longitude_then_latitude():
+    census = evaluate_point_census(
+        [polygon("wide", box(-5, 40, 7, 50))],
+        [observation("inside", longitude="1", latitude="45")],
+    )
+
+    decision = census.decisions[0]
+    assert (decision.anchor_longitude, decision.anchor_latitude) == (1.0, 45.0)
+
+
 def _main_category_digest():
     from osm_polygon_lucas.lucas_taxonomy import LUCAS_C3_LEVELS
 
@@ -196,6 +206,23 @@ def test_boundary_outside_and_multiple_matches_are_counted_and_excluded():
         "outside_source_polygons": 2,
     }
     assert census.decisions == ()
+
+
+def test_repeated_shared_boundary_points_count_both_exclusions_each_time():
+    census = evaluate_point_census(
+        [polygon("left", box(0, 0, 1, 1)), polygon("right", box(1, 0, 2, 1))],
+        [
+            observation("boundary-1", longitude="1", latitude="0.5"),
+            observation("boundary-2", longitude="1", latitude="0.5"),
+        ],
+    )
+
+    assert census.boundary_observations == 2
+    assert census.multiple_match_observations == 2
+    assert census.rejection_counts == {
+        "boundary_point": 2,
+        "multiple_source_polygons": 2,
+    }
 
 
 def test_single_polygon_boundary_is_not_reported_as_a_multiple_match():
