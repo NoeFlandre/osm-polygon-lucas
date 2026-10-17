@@ -45,5 +45,6 @@ context.
 - [Support coverage and data model](adr/0001-lucas-support-coverage.md)
 - [GeoPackage loader and C3 taxonomy](adr/0002-lucas-gpkg-loader.md)
 - [CLI JSON report](adr/0003-cli-report.md)
+- [Supplemental point-based validation](quality/lucas-point-method.md)
 - [Mutation environment](quality/mutation-environment.md)
 - [Mutation triage](quality/mutation-triage.md)

@@ -27,6 +27,24 @@ The mutation job compares every surviving mutant ID against this table. An undoc
 | `osm_polygon_lucas.polygon_coverage.x__candidate_overlap_pairs__mutmut_11` | For array input, Shapely returns a `(2, n)` index matrix. Both `zip` inputs therefore have length `n`, so changing `strict` cannot change valid query results. |
 | `osm_polygon_lucas.polygon_coverage.x__candidate_overlap_pairs__mutmut_14` | For array input, Shapely returns a `(2, n)` index matrix. Both `zip` inputs therefore have length `n`, so changing `strict` cannot change valid query results. |
 | `osm_polygon_lucas.polygon_coverage.x__candidate_overlap_pairs__mutmut_17` | For array input, Shapely returns a `(2, n)` index matrix. Both `zip` inputs therefore have length `n`, so changing `strict` cannot change valid query results. |
+| `osm_polygon_lucas.lucas_point_gpkg.x_iter_lucas_2022_point_observations__mutmut_11` | SQLite treats `fid` and `FID` as the same unquoted column identifier. |
+| `osm_polygon_lucas.lucas_point_gpkg.x_iter_lucas_2022_point_observations__mutmut_18` | The SELECT projection and `_POINT_FIELDS` have the same fixed number of columns, and `_check_point_fields` rejects missing fields before iteration; disabling strict zip cannot change row mapping for this query. |
+| `osm_polygon_lucas.lucas_point_gpkg.x_iter_lucas_2022_point_observations__mutmut_21` | The SELECT projection and `_POINT_FIELDS` have the same fixed number of columns, and `_check_point_fields` rejects missing fields before iteration; disabling strict zip cannot change row mapping for this query. |
+| `osm_polygon_lucas.lucas_point_gpkg.x_iter_lucas_2022_point_observations__mutmut_22` | The SELECT projection and `_POINT_FIELDS` have the same fixed number of columns, and `_check_point_fields` rejects missing fields before iteration; disabling strict zip cannot change row mapping for this query. |
+| `osm_polygon_lucas.point_coverage.x__taxonomy_digest__mutmut_20` | Python resolves `UTF-8` and `utf-8` to the same codec, so the digest bytes are unchanged. |
+| `osm_polygon_lucas.point_coverage.x__prepare_polygons__mutmut_32` | An empty Shapely `STRtree` returns no candidates just like the `None` fast path; the empty-source test confirms valid GPS observations remain classified as outside. |
+| `osm_polygon_lucas.point_coverage.x__validate_polygon_id__mutmut_7` | This changes only diagnostic wording; invalid IDs still raise `ValueError`, and exact wording is not a public contract. |
+| `osm_polygon_lucas.point_coverage.x__validate_polygon_id__mutmut_8` | This changes only diagnostic capitalization; invalid IDs still raise `ValueError`, and exact wording is not a public contract. |
+| `osm_polygon_lucas.point_coverage.x__record_quality_valid_observation__mutmut_8` | `typing.cast` is a runtime identity operation. Changing its type argument to `None` has no runtime effect. |
+| `osm_polygon_lucas.point_coverage.x__record_quality_valid_observation__mutmut_13` | `typing.cast` is a runtime identity operation. Changing its type argument to `None` has no runtime effect. |
+| `osm_polygon_lucas.point_coverage.x__remember_observation__mutmut_9` | This changes only the duplicate-ID diagnostic text; conflicting records still raise `ValueError`. |
+| `osm_polygon_lucas.point_coverage.x__remember_observation__mutmut_10` | This changes only the capitalization of the duplicate-ID diagnostic; conflicting records still raise `ValueError`. |
+| `osm_polygon_lucas.point_coverage.x__validate_observation_id__mutmut_5` | This changes only diagnostic wording; invalid observation IDs still raise `ValueError`. |
+| `osm_polygon_lucas.point_coverage.x__validate_observation_id__mutmut_6` | This changes only diagnostic capitalization; invalid observation IDs still raise `ValueError`. |
+| `osm_polygon_lucas.point_coverage.x__observation_mode__mutmut_9` | The mutated condition still calls the same mapping lookup; `dict.get(None)` returns `None`, as does the original conditional for an unknown mode. |
+| `osm_polygon_lucas.point_coverage.x__decisions__mutmut_16` | Only the message for an impossible internal missing-anchor invariant changes; the same `ValueError` is raised. |
+| `osm_polygon_lucas.point_coverage.x__decisions__mutmut_17` | Only the missing-anchor diagnostic text changes; the same internal `ValueError` is raised. |
+| `osm_polygon_lucas.point_coverage.x__decisions__mutmut_18` | Only the capitalization of the missing-anchor diagnostic changes; the same internal `ValueError` is raised. |
 
 ## Historical preserved run status
 
