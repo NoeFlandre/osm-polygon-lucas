@@ -13,6 +13,7 @@ from tools.lucas_point_census_domain import (
     _validate_label_join,
     candidate_partition_report,
     canonical_json,
+    coalesce_partition_candidates,
     collect_candidate_links,
     geometry_exclusion,
     invalid_geometry_digest,
@@ -49,13 +50,25 @@ def test_non_finite_bounds_are_rejected(bounds):
     assert _outside_crs84(geometry) is True
 
 
-def test_invalid_geometry_digest_handles_bytes_text_and_other_values():
-    assert invalid_geometry_digest(b"wkb", "invalid_wkb") == invalid_geometry_digest(
-        "wkb", "invalid_wkb"
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        (b"wkb", "invalid_wkb"),
+        ("not-geojson", "invalid_geojson"),
+        (123, "invalid_geojson"),
+        (None, "invalid_wkb"),
+    ],
+)
+def test_invalid_geometry_digest_uses_exact_raw_input(value, reason):
+    encoded = (
+        value
+        if isinstance(value, bytes)
+        else value.encode("utf-8")
+        if isinstance(value, str)
+        else repr(value).encode("utf-8")
     )
-    assert invalid_geometry_digest(123, "invalid_geojson") == invalid_geometry_digest(
-        123, "invalid_geojson"
-    )
+    expected = hashlib.sha256(reason.encode("ascii") + b"\0" + encoded).hexdigest()
+    assert invalid_geometry_digest(value, reason) == expected
 
 
 @pytest.mark.parametrize(
@@ -131,6 +144,12 @@ def test_sentence_key_accepts_non_negative_integer_index(index):
 def test_sentence_key_rejects_non_integer_or_negative_index(index):
     with pytest.raises(ValueError, match="non-negative integer"):
         key_from_row({"sentence_index": index}, ("sentence_index",))
+
+
+@pytest.mark.parametrize("value", ["", None, 1, False])
+def test_text_join_keys_must_be_non_empty_strings(value):
+    with pytest.raises(ValueError, match="key must be non-empty text"):
+        key_from_row({"key": value}, ("key",))
 
 
 def test_label_join_checks_row_count_revision_and_complete_candidate_coverage():
@@ -292,6 +311,71 @@ def test_candidate_links_validate_lists_and_allow_unlinked_rows():
                 {"polygon-a"},
                 "description",
             )
+
+    with pytest.raises(
+        ValueError, match="description text unit references unknown polygons"
+    ):
+        collect_candidate_links(
+            [{"key": "eligible", "polygon_ids": ["unknown-polygon"]}],
+            ("key",),
+            {"polygon-a"},
+            {"polygon-a"},
+            "description",
+        )
+
+
+def test_duplicate_non_wiki_candidates_reject_conflicting_polygon_links():
+    partition_results = [
+        {
+            "candidates": [
+                {
+                    "sentence_id": "sentence-a",
+                    "status": "yes",
+                    "sentence_key": ["sentence-a"],
+                    "polygon_ids": ["polygon-a"],
+                    "origin_region": "albania",
+                }
+            ]
+        },
+        {
+            "candidates": [
+                {
+                    "sentence_id": "sentence-a",
+                    "status": "yes",
+                    "sentence_key": ["sentence-a"],
+                    "polygon_ids": ["polygon-b"],
+                    "origin_region": "austria",
+                }
+            ]
+        },
+    ]
+
+    with pytest.raises(ValueError, match="conflicting polygon links"):
+        coalesce_partition_candidates("website-sentences-v1", partition_results)
+
+
+def test_repeated_partition_sentence_rows_count_every_duplicate():
+    row = {
+        "sentence_id": "sentence-a",
+        "status": "yes",
+        "sentence_key": ["sentence-a"],
+        "polygon_ids": ["polygon-a"],
+        "origin_region": "albania",
+    }
+    candidates, metadata, repeated_rows = coalesce_partition_candidates(
+        "website-sentences-v1",
+        [{"candidates": [row]}, {"candidates": [row.copy(), row.copy()]}],
+    )
+
+    assert candidates == [
+        {
+            "sentence_id": "sentence-a",
+            "status": "yes",
+            "polygon_ids": ["polygon-a"],
+        }
+    ]
+    assert metadata["sentence-a"]["origin_region"] == "albania"
+    assert repeated_rows == 2
 
 
 @pytest.mark.parametrize(
