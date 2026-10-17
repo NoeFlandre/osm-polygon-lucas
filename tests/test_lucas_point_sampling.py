@@ -1,10 +1,15 @@
+from collections import Counter, deque
 from typing import Any
 
 import pytest
 from shapely.geometry import box
 
 from osm_polygon_lucas import PointObservation, SourcePolygon, evaluate_point_census
-from tools.lucas_point_sampling import sample_point_sentence_instances
+from tools.lucas_point_sampling import (
+    _Candidate,
+    _round_robin_select,
+    sample_point_sentence_instances,
+)
 
 
 def observation(source_id, longitude, latitude, label):
@@ -93,6 +98,47 @@ def test_geographic_cell_cap_reports_a_real_class_shortfall():
     assert sample.shortfall_by_label == {"yes": 0, "no": 1}
     assert sample.occupied_cells == 1
     assert sample.selected_cells == 1
+
+
+def test_feasible_quotas_reassign_a_shared_cell_to_avoid_shortfall():
+    cell_a = (0, 0)
+    cell_b = (1, 0)
+    yes_a = _Candidate("yes-a", "yes", "polygon-a", cell_a, "a")
+    yes_b = _Candidate("yes-b", "yes", "polygon-b", cell_b, "b")
+    no_a = _Candidate("no-a", "no", "polygon-a", cell_a, "c")
+    selected = _round_robin_select(
+        {"yes": [cell_a, cell_b], "no": [cell_a]},
+        {
+            "yes": {cell_a: deque([yes_a]), cell_b: deque([yes_b])},
+            "no": {cell_a: deque([no_a])},
+        },
+        target_per_label=1,
+        max_per_cell=1,
+    )
+
+    assert {(entry.relevance, entry.sentence_id, entry.cell) for entry in selected} == {
+        ("yes", "yes-b", cell_b),
+        ("no", "no-a", cell_a),
+    }
+
+
+def test_infeasible_full_quotas_preserve_the_largest_balanced_sample():
+    cell_a = (0, 0)
+    cell_b = (1, 0)
+    selected = _round_robin_select(
+        {"yes": [cell_a, cell_b], "no": [cell_a]},
+        {
+            "yes": {
+                cell_a: deque([_Candidate("yes-a", "yes", "polygon-a", cell_a, "a")]),
+                cell_b: deque([_Candidate("yes-b", "yes", "polygon-b", cell_b, "b")]),
+            },
+            "no": {cell_a: deque([_Candidate("no-a", "no", "polygon-a", cell_a, "c")])},
+        },
+        target_per_label=2,
+        max_per_cell=1,
+    )
+
+    assert Counter(entry.relevance for entry in selected) == {"yes": 1, "no": 1}
 
 
 def test_duplicate_sentence_id_with_different_source_data_is_rejected():

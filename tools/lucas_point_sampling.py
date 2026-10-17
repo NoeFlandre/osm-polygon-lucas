@@ -56,6 +56,25 @@ class _Candidate:
     rank: str
 
 
+@dataclass(slots=True)
+class _FlowEdge:
+    destination: int
+    reverse: int
+    capacity: int
+
+
+@dataclass(slots=True)
+class _QuotaNetwork:
+    graph: list[list[_FlowEdge]]
+    source: int
+    sink: int
+    label_nodes: dict[str, int]
+    cell_nodes: dict[tuple[int, int], int]
+    source_edges: dict[str, int]
+    allocation_edges: dict[str, dict[tuple[int, int], int]]
+    cell_sink_edges: dict[tuple[int, int], int]
+
+
 def sample_point_sentence_instances(
     candidates: Iterable[Mapping[str, Any]],
     point_census: PointCensus,
@@ -361,99 +380,250 @@ def _round_robin_select(
     target_per_label: int,
     max_per_cell: int,
 ) -> list[PointSentenceSampleEntry]:
-    cell_counts: Counter[tuple[int, int]] = Counter()
-    selected_counts: Counter[str] = Counter()
-    cursors = {label: 0 for label in _LABELS}
+    allocations = _allocate_cell_counts(
+        cells_by_label,
+        queues,
+        target_per_label=target_per_label,
+        max_per_cell=max_per_cell,
+    )
     selected: list[PointSentenceSampleEntry] = []
-    while _needs_samples(selected_counts, target_per_label):
-        progress = _select_sample_round(
-            cells_by_label,
-            queues,
-            cursors,
-            cell_counts,
-            selected_counts,
-            selected,
-            target_per_label=target_per_label,
-            max_per_cell=max_per_cell,
-        )
-        if not progress:
-            break
+    for label in _LABELS:
+        for cell in cells_by_label[label]:
+            for _ in range(allocations[label].get(cell, 0)):
+                candidate = queues[label][cell].popleft()
+                selected.append(
+                    PointSentenceSampleEntry(
+                        sentence_id=candidate.sentence_id,
+                        relevance=label,
+                        anchor_polygon_id=candidate.polygon_id,
+                        cell=cell,
+                    )
+                )
     return selected
 
 
-def _needs_samples(selected_counts: Counter[str], target_per_label: int) -> bool:
-    return any(selected_counts[label] < target_per_label for label in _LABELS)
-
-
-def _select_sample_round(
+def _allocate_cell_counts(
     cells_by_label: Mapping[str, list[tuple[int, int]]],
     queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
-    cursors: dict[str, int],
-    cell_counts: Counter[tuple[int, int]],
-    selected_counts: Counter[str],
-    selected: list[PointSentenceSampleEntry],
     *,
     target_per_label: int,
     max_per_cell: int,
-) -> bool:
-    progress = False
-    for label in _LABELS:
-        if selected_counts[label] >= target_per_label:
-            continue
-        candidate = _next_candidate(
-            label,
-            cells_by_label,
-            queues,
-            cursors,
-            cell_counts,
-            max_per_cell,
-        )
-        if candidate is None:
-            continue
-        _record_selected_candidate(
-            candidate, label, cell_counts, selected_counts, selected
-        )
-        progress = True
-    return progress
+) -> dict[str, dict[tuple[int, int], int]]:
+    limits = {label: target_per_label for label in _LABELS}
+    network = _build_quota_network(cells_by_label, queues, limits, max_per_cell)
+    flow = _maximum_flow(network.graph, network.source, network.sink)
+    if flow == sum(limits.values()):
+        return _read_cell_allocations(network)
 
-
-def _record_selected_candidate(
-    candidate: _Candidate,
-    label: str,
-    cell_counts: Counter[tuple[int, int]],
-    selected_counts: Counter[str],
-    selected: list[PointSentenceSampleEntry],
-) -> None:
-    selected.append(
-        PointSentenceSampleEntry(
-            sentence_id=candidate.sentence_id,
-            relevance=label,
-            anchor_polygon_id=candidate.polygon_id,
-            cell=candidate.cell,
-        )
+    common_quota = _maximum_common_quota(
+        cells_by_label,
+        queues,
+        target_per_label=target_per_label,
+        max_per_cell=max_per_cell,
     )
-    selected_counts[label] += 1
-    cell_counts[candidate.cell] += 1
+    if common_quota == 0:
+        return _read_cell_allocations(network)
+    common_network = _build_quota_network(
+        cells_by_label,
+        queues,
+        {label: common_quota for label in _LABELS},
+        max_per_cell,
+    )
+    _maximum_flow(common_network.graph, common_network.source, common_network.sink)
+    common_allocations = _read_cell_allocations(common_network)
+    expanded_network = _build_quota_network(
+        cells_by_label, queues, limits, max_per_cell
+    )
+    _seed_quota_network(expanded_network, common_allocations)
+    _maximum_flow(
+        expanded_network.graph, expanded_network.source, expanded_network.sink
+    )
+    return _read_cell_allocations(expanded_network)
 
 
-def _next_candidate(
-    label: str,
+def _build_quota_network(
     cells_by_label: Mapping[str, list[tuple[int, int]]],
     queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
-    cursors: dict[str, int],
-    cell_counts: Counter[tuple[int, int]],
+    label_limits: Mapping[str, int],
     max_per_cell: int,
-) -> _Candidate | None:
-    cells = cells_by_label[label]
-    if not cells:
-        return None
-    start = cursors[label] % len(cells)
-    for offset in range(len(cells)):
-        index = (start + offset) % len(cells)
-        cell = cells[index]
-        queue = queues[label][cell]
-        cursors[label] = (index + 1) % len(cells)
-        if cell_counts[cell] >= max_per_cell or not queue:
-            continue
-        return queue.popleft()
-    return None
+) -> _QuotaNetwork:
+    cells = list(
+        dict.fromkeys(cell for label in _LABELS for cell in cells_by_label[label])
+    )
+    source = 0
+    label_nodes = {label: index + 1 for index, label in enumerate(_LABELS)}
+    cell_nodes = {cell: index + len(_LABELS) + 1 for index, cell in enumerate(cells)}
+    sink = len(label_nodes) + len(cell_nodes) + 1
+    graph: list[list[_FlowEdge]] = [[] for _ in range(sink + 1)]
+    source_edges: dict[str, int] = {}
+    allocation_edges: dict[str, dict[tuple[int, int], int]] = {
+        label: {} for label in _LABELS
+    }
+    cell_sink_edges: dict[tuple[int, int], int] = {}
+    for label in _LABELS:
+        source_edges[label] = _add_flow_edge(
+            graph, source, label_nodes[label], label_limits[label]
+        )
+        for cell in cells_by_label[label]:
+            capacity = min(label_limits[label], len(queues[label][cell]))
+            if capacity:
+                allocation_edges[label][cell] = _add_flow_edge(
+                    graph, label_nodes[label], cell_nodes[cell], capacity
+                )
+    for cell in cells:
+        cell_sink_edges[cell] = _add_flow_edge(
+            graph, cell_nodes[cell], sink, max_per_cell
+        )
+    return _QuotaNetwork(
+        graph=graph,
+        source=source,
+        sink=sink,
+        label_nodes=label_nodes,
+        cell_nodes=cell_nodes,
+        source_edges=source_edges,
+        allocation_edges=allocation_edges,
+        cell_sink_edges=cell_sink_edges,
+    )
+
+
+def _maximum_common_quota(
+    cells_by_label: Mapping[str, list[tuple[int, int]]],
+    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    *,
+    target_per_label: int,
+    max_per_cell: int,
+) -> int:
+    low = 0
+    high = target_per_label
+    while low < high:
+        quota = (low + high + 1) // 2
+        network = _build_quota_network(
+            cells_by_label,
+            queues,
+            {label: quota for label in _LABELS},
+            max_per_cell,
+        )
+        flow = _maximum_flow(network.graph, network.source, network.sink)
+        if flow == quota * len(_LABELS):
+            low = quota
+        else:
+            high = quota - 1
+    return low
+
+
+def _seed_quota_network(
+    network: _QuotaNetwork,
+    allocations: Mapping[str, Mapping[tuple[int, int], int]],
+) -> None:
+    for label in _LABELS:
+        _apply_initial_flow(
+            network.graph,
+            network.source,
+            network.source_edges[label],
+            sum(allocations[label].values()),
+        )
+        for cell, flow in allocations[label].items():
+            _apply_initial_flow(
+                network.graph,
+                network.label_nodes[label],
+                network.allocation_edges[label][cell],
+                flow,
+            )
+    for cell, edge_index in network.cell_sink_edges.items():
+        cell_flow = sum(allocations[label].get(cell, 0) for label in _LABELS)
+        _apply_initial_flow(
+            network.graph, network.cell_nodes[cell], edge_index, cell_flow
+        )
+
+
+def _apply_initial_flow(
+    graph: list[list[_FlowEdge]], node: int, edge_index: int, flow: int
+) -> None:
+    edge = graph[node][edge_index]
+    edge.capacity -= flow
+    graph[edge.destination][edge.reverse].capacity += flow
+
+
+def _add_flow_edge(
+    graph: list[list[_FlowEdge]], start: int, end: int, capacity: int
+) -> int:
+    edge_index = len(graph[start])
+    graph[start].append(_FlowEdge(end, len(graph[end]), capacity))
+    graph[end].append(_FlowEdge(start, edge_index, 0))
+    return edge_index
+
+
+def _maximum_flow(graph: list[list[_FlowEdge]], source: int, sink: int) -> int:
+    total = 0
+    while True:
+        levels = _flow_levels(graph, source)
+        if levels[sink] < 0:
+            return total
+        cursors = [0] * len(graph)
+        while pushed := _push_flow(
+            graph,
+            source,
+            sink,
+            sum(edge.capacity for edge in graph[source]),
+            levels,
+            cursors,
+        ):
+            total += pushed
+
+
+def _flow_levels(graph: list[list[_FlowEdge]], source: int) -> list[int]:
+    levels = [-1] * len(graph)
+    levels[source] = 0
+    pending = deque([source])
+    while pending:
+        node = pending.popleft()
+        for edge in graph[node]:
+            if edge.capacity > 0 and levels[edge.destination] < 0:
+                levels[edge.destination] = levels[node] + 1
+                pending.append(edge.destination)
+    return levels
+
+
+def _push_flow(
+    graph: list[list[_FlowEdge]],
+    node: int,
+    sink: int,
+    limit: int,
+    levels: list[int],
+    cursors: list[int],
+) -> int:
+    if node == sink:
+        return int(limit)
+    while cursors[node] < len(graph[node]):
+        edge = graph[node][cursors[node]]
+        if edge.capacity > 0 and levels[edge.destination] == levels[node] + 1:
+            pushed = _push_flow(
+                graph,
+                edge.destination,
+                sink,
+                min(limit, edge.capacity),
+                levels,
+                cursors,
+            )
+            if pushed:
+                edge.capacity -= pushed
+                graph[edge.destination][edge.reverse].capacity += pushed
+                return pushed
+        cursors[node] += 1
+    return 0
+
+
+def _read_cell_allocations(
+    network: _QuotaNetwork,
+) -> dict[str, dict[tuple[int, int], int]]:
+    allocations: dict[str, dict[tuple[int, int], int]] = {
+        label: {} for label in _LABELS
+    }
+    for label in _LABELS:
+        node = network.label_nodes[label]
+        for cell, edge_index in network.allocation_edges[label].items():
+            edge = network.graph[node][edge_index]
+            flow = network.graph[edge.destination][edge.reverse].capacity
+            if flow:
+                allocations[label][cell] = flow
+    return allocations
