@@ -5,12 +5,13 @@ from pathlib import Path
 
 import pytest
 import shapely
-from shapely.geometry import box
+from shapely.geometry import Polygon, box
 
 from tools import lucas_source_pool_census as census
 from tools.lucas_direct_source_snapshot import (
     _description_text_units,
     _direct_labels,
+    _project_geometry,
     _validate_snapshot_root,
     _website_text_units,
     _wiki_document_links,
@@ -127,6 +128,13 @@ def test_snapshot_root_requires_exact_cache_repository_and_commit(tmp_path):
 
     with pytest.raises(ValueError, match="owner--input/snapshots"):
         _validate_snapshot_root(expected, "owner/input", "b" * 40)
+
+
+def test_empty_polygon_is_classified_as_zero_area_before_bounds():
+    geometry, exclusion = _project_geometry(Polygon().wkb, "wkb", object())
+
+    assert geometry is None
+    assert exclusion == "zero_area"
 
 
 def test_direct_labels_normalize_unsplit_to_skipped(tmp_path):

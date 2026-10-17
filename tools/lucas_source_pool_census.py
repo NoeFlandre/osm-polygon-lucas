@@ -478,6 +478,10 @@ def _load_source_polygons(
             exclusions["non_polygon_geometry"] += 1
             decisions[polygon_id] = "non_polygon_geometry"
             continue
+        if geometry.is_empty:
+            exclusions["zero_area"] += 1
+            decisions[polygon_id] = "zero_area"
+            continue
         minx, miny, maxx, maxy = geometry.bounds
         if not all(math.isfinite(value) for value in geometry.bounds) or (
             minx < -180 or miny < -90 or maxx > 180 or maxy > 90

@@ -1,12 +1,15 @@
 import json
+from pathlib import Path
 
 import pytest
 import shapely
-from shapely.geometry import Point, box
+from shapely.geometry import Point, Polygon, box
 
+from tools import lucas_source_pool_census as census
 from tools.lucas_source_pool_census import (
     _decode_geometry,
     _load_config,
+    _load_source_polygons,
     _manifest_path,
     count_eligible_source_sentences,
     method_report,
@@ -215,6 +218,32 @@ def test_wkb_and_geojson_source_geometry_decoding():
         _decode_geometry(shapely.to_geojson(Point(0.5, 0.5)), "geojson").geom_type
         == "Point"
     )
+
+
+def test_empty_atlas_polygon_is_classified_as_zero_area_before_bounds(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        census,
+        "_verified_table_file",
+        lambda *_args: (tmp_path / "polygons.parquet", {"row_count": 1}),
+    )
+    monkeypatch.setattr(
+        census,
+        "_iter_parquet_rows",
+        lambda _path, _columns: iter(
+            [{"polygon_id": "empty", "geometry": Polygon().wkb}]
+        ),
+    )
+
+    geometries, polygon_ids, exclusions, decisions, _entry = _load_source_polygons(
+        tmp_path, {}, object(), "wkb"
+    )
+
+    assert geometries == []
+    assert polygon_ids == {"empty"}
+    assert exclusions["zero_area"] == 1
+    assert decisions == {"empty": "zero_area"}
 
 
 def test_plan_manifest_paths_keep_wikipedia_and_wikivoyage_streams_separate(tmp_path):

@@ -83,6 +83,8 @@ def _project_geometry(
         return None, "invalid_wkb" if encoding == "wkb" else "invalid_geojson"
     if not isinstance(geometry, Polygon | MultiPolygon):
         return None, "non_polygon_geometry"
+    if geometry.is_empty:
+        return None, "zero_area"
     minx, miny, maxx, maxy = geometry.bounds
     if not all(map(math.isfinite, geometry.bounds)) or (
         minx < -180 or miny < -90 or maxx > 180 or maxy > 90
