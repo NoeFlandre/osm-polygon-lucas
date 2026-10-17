@@ -141,6 +141,35 @@ def test_infeasible_full_quotas_preserve_the_largest_balanced_sample():
     assert Counter(entry.relevance for entry in selected) == {"yes": 1, "no": 1}
 
 
+def test_feasible_sample_remains_round_robin_across_occupied_cells():
+    cells = [(index, 0) for index in range(100)]
+    queues = {
+        label: {
+            cell: deque(
+                _Candidate(
+                    f"{label}-{cell[0]}-{item}",
+                    label,
+                    f"polygon-{cell[0]}",
+                    cell,
+                    f"{label}-{cell[0]}-{item}",
+                )
+                for item in range(20)
+            )
+            for cell in cells
+        }
+        for label in ("yes", "no")
+    }
+    selected = _round_robin_select(
+        {"yes": cells, "no": cells},
+        queues,
+        target_per_label=500,
+        max_per_cell=20,
+    )
+
+    assert Counter(entry.relevance for entry in selected) == {"yes": 500, "no": 500}
+    assert Counter(entry.cell for entry in selected) == dict.fromkeys(cells, 10)
+
+
 def test_duplicate_sentence_id_with_different_source_data_is_rejected():
     with pytest.raises(ValueError, match="conflicting source rows"):
         sample_point_sentence_instances(

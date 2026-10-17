@@ -410,10 +410,20 @@ def _allocate_cell_counts(
     max_per_cell: int,
 ) -> dict[str, dict[tuple[int, int], int]]:
     limits = {label: target_per_label for label in _LABELS}
+    greedy_allocations = _round_robin_allocation(
+        cells_by_label,
+        queues,
+        target_per_label=target_per_label,
+        max_per_cell=max_per_cell,
+    )
     network = _build_quota_network(cells_by_label, queues, limits, max_per_cell)
-    flow = _maximum_flow(network.graph, network.source, network.sink)
-    if flow == sum(limits.values()):
-        return _read_cell_allocations(network)
+    _seed_quota_network(network, greedy_allocations)
+    _maximum_flow(network.graph, network.source, network.sink)
+    allocations = _read_cell_allocations(network)
+    if sum(sum(allocations[label].values()) for label in _LABELS) == sum(
+        limits.values()
+    ):
+        return allocations
 
     common_quota = _maximum_common_quota(
         cells_by_label,
@@ -422,13 +432,20 @@ def _allocate_cell_counts(
         max_per_cell=max_per_cell,
     )
     if common_quota == 0:
-        return _read_cell_allocations(network)
+        return allocations
+    common_greedy = _round_robin_allocation(
+        cells_by_label,
+        queues,
+        target_per_label=common_quota,
+        max_per_cell=max_per_cell,
+    )
     common_network = _build_quota_network(
         cells_by_label,
         queues,
         {label: common_quota for label in _LABELS},
         max_per_cell,
     )
+    _seed_quota_network(common_network, common_greedy)
     _maximum_flow(common_network.graph, common_network.source, common_network.sink)
     common_allocations = _read_cell_allocations(common_network)
     expanded_network = _build_quota_network(
@@ -439,6 +456,94 @@ def _allocate_cell_counts(
         expanded_network.graph, expanded_network.source, expanded_network.sink
     )
     return _read_cell_allocations(expanded_network)
+
+
+def _round_robin_allocation(
+    cells_by_label: Mapping[str, list[tuple[int, int]]],
+    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    *,
+    target_per_label: int,
+    max_per_cell: int,
+) -> dict[str, dict[tuple[int, int], int]]:
+    allocations = {label: Counter() for label in _LABELS}
+    selected_counts: Counter[str] = Counter()
+    cell_counts: Counter[tuple[int, int]] = Counter()
+    cursors = {label: 0 for label in _LABELS}
+    while _needs_samples(selected_counts, target_per_label):
+        progress = _allocate_round_robin_round(
+            cells_by_label,
+            queues,
+            allocations,
+            selected_counts,
+            cell_counts,
+            cursors,
+            target_per_label=target_per_label,
+            max_per_cell=max_per_cell,
+        )
+        if not progress:
+            break
+    return {label: dict(allocations[label]) for label in _LABELS}
+
+
+def _allocate_round_robin_round(
+    cells_by_label: Mapping[str, list[tuple[int, int]]],
+    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    allocations: dict[str, Counter[tuple[int, int]]],
+    selected_counts: Counter[str],
+    cell_counts: Counter[tuple[int, int]],
+    cursors: dict[str, int],
+    *,
+    target_per_label: int,
+    max_per_cell: int,
+) -> bool:
+    progress = False
+    for label in _LABELS:
+        if selected_counts[label] >= target_per_label:
+            continue
+        cell = _next_available_cell(
+            label,
+            cells_by_label,
+            queues,
+            allocations,
+            cell_counts,
+            cursors,
+            max_per_cell,
+        )
+        if cell is None:
+            continue
+        allocations[label][cell] += 1
+        selected_counts[label] += 1
+        cell_counts[cell] += 1
+        progress = True
+    return progress
+
+
+def _needs_samples(selected_counts: Counter[str], target_per_label: int) -> bool:
+    return any(selected_counts[label] < target_per_label for label in _LABELS)
+
+
+def _next_available_cell(
+    label: str,
+    cells_by_label: Mapping[str, list[tuple[int, int]]],
+    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    allocations: Mapping[str, Counter[tuple[int, int]]],
+    cell_counts: Counter[tuple[int, int]],
+    cursors: dict[str, int],
+    max_per_cell: int,
+) -> tuple[int, int] | None:
+    cells = cells_by_label[label]
+    if not cells:
+        return None
+    start = cursors[label] % len(cells)
+    for offset in range(len(cells)):
+        index = (start + offset) % len(cells)
+        cell = cells[index]
+        cursors[label] = (index + 1) % len(cells)
+        if cell_counts[cell] < max_per_cell and allocations[label][cell] < len(
+            queues[label][cell]
+        ):
+            return cell
+    return None
 
 
 def _build_quota_network(
