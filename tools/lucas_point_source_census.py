@@ -53,9 +53,6 @@ from tools.lucas_point_census_domain import (
     validate_text_key_replay,
 )
 from tools.lucas_point_census_domain import (
-    canonical_json as _canonical_json,
-)
-from tools.lucas_point_census_domain import (
     geometry_digest as _geometry_digest,
 )
 from tools.lucas_point_census_domain import (
@@ -516,10 +513,6 @@ def _region_polygon_ids(path: Path, schema: str) -> set[str]:
     if rows != _parquet_row_count(path):
         raise ValueError("source polygon ID count differs from Parquet metadata")
     return ids
-
-
-def _sentence_id(source_id: str, stream: str, key: tuple[Any, ...]) -> str:
-    return _canonical_json([source_id, stream, list(key)])
 
 
 def _collect_candidates(
