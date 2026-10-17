@@ -625,9 +625,8 @@ def test_point_result_preserves_decision_digest_and_status_contract() -> None:
 
 
 def test_runtime_identity_hashes_exact_code_and_runtime_inputs(
-    repository_root: Path,
+    repository_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    identity = point_runner._runtime_and_code_identity()
     code_paths = {
         "point_census_tool": Path(point_runner.__file__),
         "point_census_domain": repository_root / "tools/lucas_point_census_domain.py",
@@ -638,8 +637,14 @@ def test_runtime_identity_hashes_exact_code_and_runtime_inputs(
         "taxonomy": repository_root / "src/osm_polygon_lucas/lucas_taxonomy.py",
         "sampling_tool": repository_root / "tools/lucas_point_sampling.py",
     }
+    monkeypatch.setattr(
+        pool_census,
+        "_file_sha256",
+        lambda path: hashlib.sha256(str(path).encode("utf-8")).hexdigest(),
+    )
+    identity = point_runner._runtime_and_code_identity()
     assert identity["code_sha256"] == {
-        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        name: hashlib.sha256(str(path).encode("utf-8")).hexdigest()
         for name, path in code_paths.items()
     }
     assert identity["runtime"] == {
@@ -652,6 +657,14 @@ def test_runtime_identity_hashes_exact_code_and_runtime_inputs(
         "shapely": shapely.__version__,
         "geos": shapely.geos_version_string,
     }
+
+
+def test_file_sha256_hashes_exact_contents(tmp_path: Path):
+    path = tmp_path / "runtime-source.py"
+    contents = b"# stable fixture\nvalue = 'exact bytes'\n"
+    path.write_bytes(contents)
+
+    assert pool_census._file_sha256(path) == hashlib.sha256(contents).hexdigest()
 
 
 @pytest.mark.parametrize("source_name", ["Description", "Website", "Wikidata"])
