@@ -905,8 +905,8 @@ def main() -> None:
     if args.availability_only:
         if (
             args.source
-            or args.region
-            or args.stream
+            or args.regions
+            or args.streams
             or args.lucas_gpkg
             or args.source_snapshot
             or args.label_snapshot
