@@ -914,15 +914,25 @@ def run_direct_source_pool_census(
             "support_eligibility",
         )
     }
+    package_init_sha256 = census._file_sha256(
+        Path(__file__).resolve().parents[1] / "src/osm_polygon_lucas/__init__.py"
+    )
+    pyproj = importlib.import_module("pyproj")
+    pyproj_database = importlib.import_module("pyproj.database")
     runtime_versions = {
         "pyarrow": importlib.import_module("pyarrow").__version__,
-        "pyproj": importlib.import_module("pyproj").__version__,
+        "pyproj": pyproj.__version__,
+        "proj": pyproj.proj_version_str,
+        "proj_data": pyproj_database.get_database_metadata("PROJ_DATA.VERSION"),
+        "epsg_database": pyproj_database.get_database_metadata("EPSG.VERSION"),
         "shapely": shapely.__version__,
+        "geos": shapely.geos_version_string,
     }
     checkpoint_code_identity = {
         "direct_source_tool_sha256": tool_sha256,
         "source_pool_census_tool_sha256": census_tool_sha256,
         "description_census_tool_sha256": description_census_sha256,
+        "package_init_sha256": package_init_sha256,
         "coverage_api_sha256": coverage_api_sha256,
         "runtime_versions": runtime_versions,
     }
@@ -1086,6 +1096,7 @@ def run_direct_source_pool_census(
         "tool_sha256": tool_sha256,
         "source_pool_census_tool_sha256": census_tool_sha256,
         "description_census_tool_sha256": description_census_sha256,
+        "package_init_sha256": package_init_sha256,
         "coverage_api_sha256": coverage_api_sha256,
         "sampling": "not run; eligibility counts are reported before H3 sampling",
         "stream_summaries": summaries,

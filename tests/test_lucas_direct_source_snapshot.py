@@ -267,6 +267,7 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
         "direct_source_tool_sha256",
         "source_pool_census_tool_sha256",
         "description_census_tool_sha256",
+        "package_init_sha256",
         "coverage_api_sha256",
         "runtime_versions",
     }
@@ -275,6 +276,15 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
         "lucas_taxonomy",
         "polygon_coverage",
         "support_eligibility",
+    }
+    assert set(identity["code_identity"]["runtime_versions"]) == {
+        "pyarrow",
+        "pyproj",
+        "proj",
+        "proj_data",
+        "epsg_database",
+        "shapely",
+        "geos",
     }
     assert report["aggregate_across_selected_streams"][
         "eligible_source_relevance_instances"
@@ -317,14 +327,18 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
     monkeypatch.setattr(census, "_census_polygons", census_polygons)
     monkeypatch.setattr(direct_snapshot, "_direct_text_units", read_text_units)
     original_file_sha256 = census._file_sha256
-    changed_census_sha = hashlib.sha256(b"changed census implementation").hexdigest()
+    package_init_path = (
+        Path(direct_snapshot.__file__).resolve().parents[1]
+        / "src/osm_polygon_lucas/__init__.py"
+    )
+    changed_package_init_sha = hashlib.sha256(b"changed package exports").hexdigest()
 
-    def changed_census_sha256(path):
-        if Path(path).resolve() == Path(census.__file__).resolve():
-            return changed_census_sha
+    def changed_package_init_sha256(path):
+        if Path(path).resolve() == package_init_path.resolve():
+            return changed_package_init_sha
         return original_file_sha256(path)
 
-    monkeypatch.setattr(census, "_file_sha256", changed_census_sha256)
+    monkeypatch.setattr(census, "_file_sha256", changed_package_init_sha256)
     rerun = run_direct_source_pool_census(
         input_root,
         label_root,
@@ -336,7 +350,7 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
         stream_names=selected_streams,
         checkpoint_dir=checkpoint_dir,
     )
-    assert rerun["source_pool_census_tool_sha256"] == (changed_census_sha)
+    assert rerun["package_init_sha256"] == changed_package_init_sha
     assert rerun["checkpointing"]["lucas_asset_hash_reused"] is False
     assert rerun["checkpointing"]["geometry_checkpoints_reused"] == 0
     assert rerun["checkpointing"]["region_results_reused"] == 0
