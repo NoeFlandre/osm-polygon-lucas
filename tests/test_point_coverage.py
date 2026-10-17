@@ -277,7 +277,10 @@ def test_quality_flags_and_coordinates_are_explicit_rejections():
     )
 
     assert census.quality_valid_observations == 0
-    assert census.input_observation_modes == {"unknown_or_missing": 4}
+    assert census.input_observation_modes == {
+        "field_visible_within_100m": 11,
+        "unknown_or_missing": 4,
+    }
     assert census.rejection_counts == {
         "invalid_gps_coordinates": 5,
         "invalid_point_copernicus": 1,
