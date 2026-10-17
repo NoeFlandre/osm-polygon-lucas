@@ -128,13 +128,9 @@ def test_input_fingerprint_detects_same_size_content_change(tmp_path):
     path = tmp_path / "snapshot.parquet"
     path.write_bytes(b"first")
 
-    first, _ = direct_snapshot._input_file_fingerprint(
-        path, include_content_hash=True
-    )
+    first, _ = direct_snapshot._input_file_fingerprint(path, include_content_hash=True)
     path.write_bytes(b"other")
-    second, _ = direct_snapshot._input_file_fingerprint(
-        path, include_content_hash=True
-    )
+    second, _ = direct_snapshot._input_file_fingerprint(path, include_content_hash=True)
 
     assert first["size_bytes"] == second["size_bytes"]
     assert first["sha256"] != second["sha256"]
@@ -335,9 +331,10 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
     polygon_path = input_root / source["direct_input"]["polygon_path_template"].format(
         region="albania", stream=selected_streams[0]
     )
-    assert identity["polygon_sha256"] == hashlib.sha256(
-        polygon_path.read_bytes()
-    ).hexdigest()
+    assert (
+        identity["polygon_sha256"]
+        == hashlib.sha256(polygon_path.read_bytes()).hexdigest()
+    )
     result_checkpoint = next((checkpoint_dir / "results").glob("*.json"))
     result_identity = json.loads(result_checkpoint.read_text(encoding="utf-8"))[
         "identity"
@@ -346,9 +343,10 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
     label_path = label_root / stream["labels_path_template"].format(
         region="albania", stream=selected_streams[0]
     )
-    assert result_identity["label_sha256"] == hashlib.sha256(
-        label_path.read_bytes()
-    ).hexdigest()
+    assert (
+        result_identity["label_sha256"]
+        == hashlib.sha256(label_path.read_bytes()).hexdigest()
+    )
     assert all(
         entry["sha256"]
         == hashlib.sha256((input_root / entry["name"]).read_bytes()).hexdigest()

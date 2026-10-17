@@ -121,10 +121,9 @@ def _complete_source_scope(
     selected_regions: list[str],
     selected_streams: list[str],
 ) -> bool:
-    return (
-        set(selected_regions) == set(config["scope"]["regions"])
-        and set(selected_streams) == {stream["name"] for stream in source["streams"]}
-    )
+    return set(selected_regions) == set(config["scope"]["regions"]) and set(
+        selected_streams
+    ) == {stream["name"] for stream in source["streams"]}
 
 
 def _read_checkpoint(
