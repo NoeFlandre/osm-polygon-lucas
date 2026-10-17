@@ -1,3 +1,4 @@
+import hashlib
 import math
 from collections import Counter
 from types import SimpleNamespace
@@ -10,12 +11,17 @@ from shapely.geometry.base import BaseGeometry
 from tools.lucas_point_census_domain import (
     _outside_crs84,
     _validate_label_join,
+    candidate_partition_report,
+    canonical_json,
     collect_candidate_links,
     geometry_exclusion,
     invalid_geometry_digest,
     join_candidate_labels,
     key_from_row,
+    make_candidate_rows,
+    payload_sha256,
     point_index_from_result,
+    validate_text_key_replay,
 )
 
 
@@ -91,6 +97,31 @@ def test_point_index_rejects_incomplete_checkpoint_maps(anchors, labels, message
         )
 
 
+@pytest.mark.parametrize("coordinates", [[-180.0, -90.0], [180.0, 90.0], [0.0, 0.0]])
+def test_point_index_accepts_crs84_boundary_coordinates(coordinates):
+    index = point_index_from_result(
+        {
+            "eligible_polygon_anchors": {"polygon-a": coordinates},
+            "eligible_polygon_labels": {"polygon-a": "C10"},
+        }
+    )
+    assert index.eligible_polygon_anchors == {"polygon-a": tuple(coordinates)}
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [[-180.0001, 0.0], [180.0001, 0.0], [0.0, -90.0001], [0.0, 90.0001]],
+)
+def test_point_index_rejects_coordinates_outside_crs84_bounds(coordinates):
+    with pytest.raises(ValueError, match="outside OGC:CRS84 bounds"):
+        point_index_from_result(
+            {
+                "eligible_polygon_anchors": {"polygon-a": coordinates},
+                "eligible_polygon_labels": {"polygon-a": "C10"},
+            }
+        )
+
+
 @pytest.mark.parametrize("index", [0, 9])
 def test_sentence_key_accepts_non_negative_integer_index(index):
     assert key_from_row({"sentence_index": index}, ("sentence_index",)) == (index,)
@@ -142,6 +173,100 @@ def test_label_join_checks_row_count_revision_and_complete_candidate_coverage():
         labels={},
         candidate_keys=set(),
     )
+
+
+def test_canonical_json_and_payload_digest_are_stable_for_unicode_values():
+    value = {"é": 1, "a": 2}
+    expected = '{"a":2,"é":1}'
+    assert canonical_json(value) == expected
+    assert payload_sha256(value) == hashlib.sha256(expected.encode("utf-8")).hexdigest()
+
+
+def test_label_join_counts_all_rows_and_only_joined_candidates():
+    labels, source_statuses, joined_statuses = join_candidate_labels(
+        [
+            {"key": "candidate-yes", "status": "yes", "input_revision": "r1"},
+            {"key": "candidate-no", "status": "no", "input_revision": "r1"},
+            {"key": "not-eligible", "status": "yes", "input_revision": "r1"},
+        ],
+        ("key",),
+        {("candidate-yes",), ("candidate-no",)},
+        "r1",
+        3,
+    )
+    assert labels == {("candidate-yes",): "yes", ("candidate-no",): "no"}
+    assert source_statuses == Counter(yes=2, no=1)
+    assert joined_statuses == Counter(yes=1, no=1)
+
+
+def test_candidate_partition_report_and_rows_keep_public_schema():
+    links = {("sentence-a",): ["polygon-a"], ("sentence-b",): ["polygon-b"]}
+    labels = {("sentence-a",): "yes", ("sentence-b",): "no"}
+    candidates = make_candidate_rows("website", "website", "albania", links, labels)
+    assert candidates == [
+        {
+            "sentence_id": '["website","website",["sentence-a"]]',
+            "sentence_key": ["sentence-a"],
+            "status": "yes",
+            "polygon_ids": ["polygon-a"],
+            "origin_region": "albania",
+        },
+        {
+            "sentence_id": '["website","website",["sentence-b"]]',
+            "sentence_key": ["sentence-b"],
+            "status": "no",
+            "polygon_ids": ["polygon-b"],
+            "origin_region": "albania",
+        },
+    ]
+    report = candidate_partition_report(
+        "albania",
+        "website",
+        5,
+        2,
+        Counter(yes=3, no=2),
+        Counter(yes=1, no=1),
+        candidates,
+    )
+    assert report == {
+        "region": "albania",
+        "stream": "website",
+        "text_unit_rows_scanned": 5,
+        "duplicate_validation_rows": 2,
+        "source_label_rows": {"no": 2, "yes": 3},
+        "joined_to_point_eligible_polygons": {"no": 1, "yes": 1},
+        "not_joined_to_point_eligible_polygons": {"no": 1, "yes": 2},
+        "point_eligible_sentence_instances": 2,
+        "candidates": candidates,
+    }
+
+
+def test_candidate_text_key_replay_rejects_duplicates_and_row_changes():
+    assert (
+        validate_text_key_replay(
+            [{"key": "candidate"}, {"key": "other"}],
+            ("key",),
+            {("candidate",)},
+            2,
+        )
+        == 2
+    )
+    with pytest.raises(
+        ValueError, match="duplicate point-eligible source text-unit key"
+    ):
+        validate_text_key_replay(
+            [{"key": "candidate"}, {"key": "candidate"}],
+            ("key",),
+            {("candidate",)},
+            2,
+        )
+    with pytest.raises(ValueError, match="changed during duplicate-key validation"):
+        validate_text_key_replay(
+            [{"key": "candidate"}],
+            ("key",),
+            {("candidate",)},
+            2,
+        )
 
 
 def test_candidate_links_validate_lists_and_allow_unlinked_rows():

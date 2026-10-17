@@ -9,9 +9,18 @@ from hypothesis import strategies as st
 from lucas_gpkg_builder import feature, write_lucas_gpkg
 from shapely.geometry import box
 
+from osm_polygon_lucas.point_coverage import (
+    PointCensus,
+    PointPolygonDecision,
+    PointPolygonStatus,
+)
 from tools import lucas_point_source_census as point_runner
 from tools import lucas_source_pool_census as pool_census
-from tools.lucas_point_census_domain import coalesce_partition_candidates
+from tools.lucas_point_census_domain import (
+    coalesce_partition_candidates,
+    point_decision_digest,
+    point_result,
+)
 from tools.lucas_point_sampling import sample_point_sentence_instances
 from tools.lucas_point_source_census import (
     _PointIndex,
@@ -266,6 +275,329 @@ def _source_and_label_files(
     return written
 
 
+def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
+    assert set(report) == {
+        "report_schema",
+        "source_name",
+        "source_id",
+        "source_display_label",
+        "scope",
+        "method",
+        "source_pins",
+        "lucas_asset",
+        "config_hashes",
+        "code_and_runtime_identity",
+        "input_receipts",
+        "point_census",
+        "cohorts",
+        "checkpointing",
+        "sampling_complete_for_selected_scope",
+    }
+    assert report["report_schema"] == "lucas-point-source-census/v1"
+    assert report["source_name"] == source_name
+    assert report["source_id"] == source["source_id"]
+    assert report["source_display_label"] == source.get("display_label", source_name)
+    assert set(report["scope"]) == {
+        "regions",
+        "configured_region_count",
+        "streams",
+        "scope_complete",
+    }
+    assert set(report["method"]) == {
+        "point_rule",
+        "boundary_outside_multiple_matches",
+        "conflicting_or_unlabeled_polygons",
+        "source_yes_no_semantics",
+        "sampling",
+    }
+    assert report["method"]["point_rule"] == (
+        "actual survey_gps_long/survey_gps_lat observations and "
+        "surveycprnlc mapped to main_category; exactly one distinct "
+        "mapped category per polygon"
+    )
+    assert report["method"]["boundary_outside_multiple_matches"] == "excluded"
+    assert report["method"]["conflicting_or_unlabeled_polygons"] == "excluded"
+    assert report["method"]["source_yes_no_semantics"] == (
+        "source relevance labels, separate from LUCAS categories"
+    )
+    assert set(report["method"]["sampling"]) == {
+        "target_per_label",
+        "seed",
+        "cell_size_metres",
+        "max_per_cell",
+        "anchor_rule",
+    }
+    assert report["method"]["sampling"]["anchor_rule"] == (
+        "lexically smallest point-eligible linked polygon ID"
+    )
+    assert report["method"]["sampling"] == {
+        "target_per_label": 2,
+        "seed": 42,
+        "cell_size_metres": 50_000,
+        "max_per_cell": 20,
+        "anchor_rule": "lexically smallest point-eligible linked polygon ID",
+    }
+    assert set(report["source_pins"]) == {
+        "source_id",
+        "input_repository",
+        "input_revision",
+        "label_repository",
+        "label_revision",
+        "geometry_encoding",
+        "join_key_fields",
+    }
+    assert report["source_pins"] == {
+        key: source[key]
+        for key in (
+            "source_id",
+            "input_repository",
+            "input_revision",
+            "label_repository",
+            "label_revision",
+            "geometry_encoding",
+            "join_key_fields",
+        )
+    }
+    assert set(report["lucas_asset"]) == {
+        "sha256",
+        "size_bytes",
+        "sha256_verification_checkpoint_reused",
+        "identity_stable_during_run",
+    }
+    assert report["lucas_asset"]["identity_stable_during_run"] is True
+    assert set(report["code_and_runtime_identity"]) == {"code_sha256", "runtime"}
+    assert set(report["code_and_runtime_identity"]["code_sha256"]) == {
+        "point_census_tool",
+        "point_census_domain",
+        "source_pool_tool",
+        "direct_snapshot_tool",
+        "point_coverage",
+        "point_gpkg",
+        "taxonomy",
+        "sampling_tool",
+    }
+    assert set(report["code_and_runtime_identity"]["runtime"]) == {
+        "python",
+        "pyarrow",
+        "pyproj",
+        "proj",
+        "proj_data",
+        "epsg_database",
+        "shapely",
+        "geos",
+    }
+    assert all(
+        len(digest) == 64
+        for digest in report["code_and_runtime_identity"]["code_sha256"].values()
+    )
+    assert set(report["input_receipts"]) == {"geometry", "partitions"}
+    assert set(report["checkpointing"]) == {
+        "enabled",
+        "directory",
+        "point_census_reused",
+        "candidate_checkpoints_reused",
+        "candidate_checkpoints_saved",
+    }
+    assert report["checkpointing"]["enabled"] is True
+    assert (
+        report["sampling_complete_for_selected_scope"]
+        is report["scope"]["scope_complete"]
+    )
+
+    points = report["point_census"]
+    assert set(points) == {
+        "source_polygon_records",
+        "unique_source_polygon_records",
+        "duplicate_polygon_records_coalesced",
+        "valid_unique_source_polygons",
+        "geometry_exclusions",
+        "taxonomy_level",
+        "taxonomy_mapping_sha256",
+        "observation_count",
+        "duplicate_records_skipped",
+        "quality_valid_observations",
+        "located_observations",
+        "valid_labeled_observations",
+        "boundary_observations",
+        "outside_observations",
+        "multiple_match_observations",
+        "rejection_counts",
+        "input_observation_modes",
+        "quality_valid_observation_modes",
+        "located_observation_modes",
+        "eligible_polygon_count",
+        "conflict_polygon_count",
+        "no_valid_label_polygon_count",
+        "unobserved_valid_polygon_count",
+        "point_polygon_status_counts",
+        "eligible_polygon_labels",
+        "eligible_polygon_anchors",
+        "point_decision_sha256",
+    }
+    assert set(points["geometry_exclusions"]) == {
+        "invalid_wkb",
+        "invalid_geojson",
+        "non_polygon_geometry",
+        "outside_crs84_bounds",
+        "invalid_geometry",
+        "zero_area",
+    }
+    assert set(points["point_polygon_status_counts"]) == {
+        "eligible",
+        "conflicting_labels",
+        "no_valid_label",
+        "unobserved",
+    }
+    assert points["point_polygon_status_counts"] == {
+        "eligible": points["eligible_polygon_count"],
+        "conflicting_labels": points["conflict_polygon_count"],
+        "no_valid_label": points["no_valid_label_polygon_count"],
+        "unobserved": points["unobserved_valid_polygon_count"],
+    }
+
+    for cohort in report["cohorts"].values():
+        assert set(cohort) == {
+            "source_name",
+            "source_id",
+            "stream",
+            "partition_results",
+            "point_eligible_sentence_instances_by_status",
+            "repeated_partition_sentence_rows_coalesced",
+            "sample",
+            "selected",
+            "selected_manifest",
+        }
+        assert set(cohort["sample"]) == {
+            "source",
+            "seed",
+            "target_per_label",
+            "cell_size_metres",
+            "max_per_cell",
+            "eligible_by_label",
+            "selected_by_label",
+            "shortfall_by_label",
+            "unique_eligible_polygons",
+            "unique_selected_polygons",
+            "occupied_cells",
+            "selected_cells",
+            "repeated_source_rows_skipped",
+            "multi_polygon_sentences_anchored",
+            "non_binary_statuses",
+            "selected_sentence_ids_by_polygon",
+            "selected",
+        }
+        assert set(cohort["selected_manifest"]) == {"key_fields", "entries"}
+        assert cohort["selected_manifest"]["entries"] == cohort["selected"]
+        assert set(cohort["partition_results"][0]) == {
+            "region",
+            "stream",
+            "text_unit_rows_scanned",
+            "duplicate_validation_rows",
+            "source_label_rows",
+            "joined_to_point_eligible_polygons",
+            "not_joined_to_point_eligible_polygons",
+            "point_eligible_sentence_instances",
+        }
+        for selected in cohort["selected"]:
+            assert set(selected) == {
+                "sentence_id",
+                "relevance",
+                "anchor_polygon_id",
+                "cell",
+                "natural_key",
+                "origin_region",
+            }
+
+
+def test_point_result_preserves_decision_digest_and_status_contract() -> None:
+    decision = PointPolygonDecision(
+        polygon_id="osm:way/1",
+        status=PointPolygonStatus.ELIGIBLE,
+        label="C00",
+        located_observations=2,
+        valid_observations=2,
+        missing_label_observations=0,
+        invalid_label_observations=0,
+        unmapped_label_observations=0,
+        observation_mode_counts={"actual_gps": 2},
+        observed_labels=("C00",),
+        anchor_longitude=12.5,
+        anchor_latitude=45.5,
+    )
+    census = PointCensus(
+        taxonomy_level="main_category",
+        taxonomy_mapping_sha256="a" * 64,
+        source_polygon_count=2,
+        observation_count=2,
+        duplicate_records_skipped=0,
+        quality_valid_observations=2,
+        located_observations=2,
+        valid_labeled_observations=2,
+        eligible_polygon_count=1,
+        conflict_polygon_count=0,
+        no_valid_label_polygon_count=0,
+        boundary_observations=0,
+        outside_observations=0,
+        multiple_match_observations=0,
+        rejection_counts={"wrong_survey_year": 1},
+        input_observation_modes={"actual_gps": 2},
+        quality_valid_observation_modes={"actual_gps": 2},
+        located_observation_modes={"actual_gps": 2},
+        decisions=(decision,),
+    )
+    polygon_stats = {
+        "source_polygon_records": 2,
+        "unique_source_polygon_records": 2,
+        "duplicate_polygon_records_coalesced": 0,
+        "valid_unique_source_polygons": 1,
+        "geometry_exclusions": {
+            "invalid_wkb": 0,
+            "invalid_geojson": 0,
+            "non_polygon_geometry": 0,
+            "outside_crs84_bounds": 0,
+            "invalid_geometry": 0,
+            "zero_area": 0,
+        },
+    }
+    result = point_result(census, polygon_stats)
+    expected_decision = {
+        "polygon_id": "osm:way/1",
+        "status": "eligible",
+        "label": "C00",
+        "located_observations": 2,
+        "valid_observations": 2,
+        "missing_label_observations": 0,
+        "invalid_label_observations": 0,
+        "unmapped_label_observations": 0,
+        "observed_labels": ["C00"],
+        "anchor": [12.5, 45.5],
+    }
+    expected_digest = hashlib.sha256(
+        json.dumps(
+            [expected_decision],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    assert result["point_decision_sha256"] == expected_digest
+    assert result["point_decision_sha256"] == point_decision_digest(census)
+    assert set(result["point_polygon_status_counts"]) == {
+        "eligible",
+        "conflicting_labels",
+        "no_valid_label",
+        "unobserved",
+    }
+    assert result["point_polygon_status_counts"] == {
+        "eligible": 1,
+        "conflicting_labels": 0,
+        "no_valid_label": 0,
+        "unobserved": 0,
+    }
+    polygon_stats["valid_unique_source_polygons"] = 2
+    assert point_result(census, polygon_stats)["unobserved_valid_polygon_count"] == 1
+
+
 @pytest.mark.parametrize("source_name", ["Description", "Website", "Wikidata"])
 def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_polygons(
     repository_root: Path, tmp_path: Path, source_name: str
@@ -313,6 +645,7 @@ def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_po
         checkpoint_dir=tmp_path / "checkpoints",
     )
 
+    _assert_report_schema(report, source, source_name)
     points = report["point_census"]
     assert points["observation_count"] == 7
     assert points["eligible_polygon_count"] == 1
@@ -392,6 +725,147 @@ def test_point_source_checkpoints_resume_without_changing_selected_manifest(
         )
 
     first = run()
+    checkpoint_paths = sorted((tmp_path / "checkpoints").rglob("*.json"))
+    assert len(checkpoint_paths) == 3
+    checkpoints = [
+        json.loads(path.read_text(encoding="utf-8")) for path in checkpoint_paths
+    ]
+    base_identity_keys = {
+        "source_id",
+        "source_name",
+        "input_repository",
+        "input_revision",
+        "label_repository",
+        "label_revision",
+        "geometry_encoding",
+        "lucas_sha256",
+        "config_hashes",
+        "code_identity",
+        "scope",
+        "taxonomy_level",
+        "sampling",
+    }
+    for checkpoint in checkpoints:
+        expected_checkpoint_keys = {
+            "checkpoint_schema",
+            "identity",
+            "result",
+        }
+        if checkpoint["checkpoint_schema"] != "lucas-asset-verification/v1":
+            expected_checkpoint_keys.add("result_sha256")
+        assert set(checkpoint) == expected_checkpoint_keys
+    asset_checkpoint = next(
+        checkpoint
+        for checkpoint in checkpoints
+        if checkpoint["checkpoint_schema"] == "lucas-asset-verification/v1"
+    )
+    assert set(asset_checkpoint["identity"]) == {
+        "asset_path",
+        "asset_signature",
+        "code_identity",
+        "expected_sha256",
+        "expected_size_bytes",
+        "lucas_config_sha256",
+        "stage",
+    }
+    assert set(asset_checkpoint["result"]) == {"sha256", "size_bytes"}
+    point_checkpoint = next(
+        checkpoint
+        for checkpoint in checkpoints
+        if checkpoint["identity"].get("stage") == "point-census"
+    )
+    candidate_checkpoint = next(
+        checkpoint
+        for checkpoint in checkpoints
+        if checkpoint["identity"].get("stage") == "candidate-join"
+    )
+    for checkpoint in (point_checkpoint, candidate_checkpoint):
+        identity = checkpoint["identity"]
+        assert identity["source_name"] == "Description"
+        assert identity["source_id"] == source["source_id"]
+        assert identity["input_repository"] == source["input_repository"]
+        assert identity["input_revision"] == source["input_revision"]
+        assert identity["label_repository"] == source["label_repository"]
+        assert identity["label_revision"] == source["label_revision"]
+        assert identity["taxonomy_level"] == "main_category"
+        assert identity["scope"] == {"regions": [REGION], "streams": ["description"]}
+        assert identity["sampling"] == {
+            "target_per_label": 500,
+            "seed": 42,
+            "cell_size_metres": 50_000,
+            "max_per_cell": 20,
+        }
+    assert set(point_checkpoint["identity"]) == base_identity_keys | {
+        "stage",
+        "polygon_files",
+    }
+    assert set(candidate_checkpoint["identity"]) == base_identity_keys | {
+        "stage",
+        "region",
+        "stream",
+        "point_index_sha256",
+        "input_files",
+    }
+    assert set(candidate_checkpoint["result"]) == {
+        "region",
+        "stream",
+        "text_unit_rows_scanned",
+        "duplicate_validation_rows",
+        "source_label_rows",
+        "joined_to_point_eligible_polygons",
+        "not_joined_to_point_eligible_polygons",
+        "point_eligible_sentence_instances",
+        "candidates",
+    }
+    assert all(
+        set(candidate)
+        == {
+            "sentence_id",
+            "sentence_key",
+            "status",
+            "polygon_ids",
+            "origin_region",
+        }
+        for candidate in candidate_checkpoint["result"]["candidates"]
+    )
+    for checkpoint in checkpoints:
+        identity = checkpoint["identity"]
+        identity_hash = hashlib.sha256(
+            json.dumps(
+                identity,
+                **(
+                    {"sort_keys": True, "separators": (",", ":")}
+                    if checkpoint["checkpoint_schema"] == "lucas-asset-verification/v1"
+                    else {
+                        "ensure_ascii": False,
+                        "sort_keys": True,
+                        "separators": (",", ":"),
+                    }
+                ),
+            ).encode("utf-8")
+        ).hexdigest()
+        stem = "-".join(
+            str(identity[key])
+            for key in ("source_id", "region", "stream")
+            if identity.get(key) is not None
+        ) or (
+            "asset"
+            if checkpoint["checkpoint_schema"] == "lucas-asset-verification/v1"
+            else "run"
+        )
+        directory = {
+            "lucas-asset-verification/v1": "assets",
+            "lucas-point-census-checkpoint/v1": "point",
+            "lucas-point-candidate-checkpoint/v1": "candidates",
+        }[checkpoint["checkpoint_schema"]]
+        path = next(
+            path
+            for path in checkpoint_paths
+            if json.loads(path.read_text(encoding="utf-8")) == checkpoint
+        )
+        assert path.relative_to(tmp_path / "checkpoints") == Path(directory) / (
+            f"{stem}-{identity_hash[:16]}.json"
+        )
     resumed = run()
 
     assert resumed["cohorts"] == first["cohorts"]
@@ -770,17 +1244,26 @@ def test_cli_runs_explicit_snapshots_and_writes_a_new_report(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
     captured = {}
+    report = {
+        "report_schema": "synthetic/v1",
+        "scope_complete": False,
+        "note": "é",
+    }
 
     def fake_run(input_snapshot, label_snapshot, *args, **kwargs):
         captured["input_snapshot"] = input_snapshot
         captured["label_snapshot"] = label_snapshot
         captured["args"] = args
         captured["kwargs"] = kwargs
-        return {"report_schema": "synthetic/v1", "scope_complete": False}
+        return report
 
     monkeypatch.setattr(point_runner, "run_point_source_census", fake_run)
     input_snapshot = tmp_path / "input-snapshot"
     label_snapshot = tmp_path / "label-snapshot"
+    gpkg_path = tmp_path / "lucas.gpkg"
+    config_path = tmp_path / "source-config.json"
+    lucas_source_config_path = tmp_path / "lucas-source-config.json"
+    checkpoint_dir = tmp_path / "checkpoints"
     output = tmp_path / "reports" / "synthetic.json"
 
     point_runner.main(
@@ -790,11 +1273,31 @@ def test_cli_runs_explicit_snapshots_and_writes_a_new_report(
             "--label-snapshot",
             str(label_snapshot),
             "--lucas-gpkg",
-            str(tmp_path / "lucas.gpkg"),
+            str(gpkg_path),
+            "--config",
+            str(config_path),
+            "--lucas-source-config",
+            str(lucas_source_config_path),
             "--source",
             "Description",
+            "--region",
+            "albania",
+            "--region",
+            "austria",
+            "--stream",
+            "description",
+            "--taxonomy-level",
+            "detailed",
+            "--target-per-label",
+            "3",
+            "--seed",
+            "7",
+            "--cell-size-metres",
+            "20000",
+            "--max-per-cell",
+            "4",
             "--checkpoint-dir",
-            str(tmp_path / "checkpoints"),
+            str(checkpoint_dir),
             "--output",
             str(output),
         ]
@@ -802,16 +1305,95 @@ def test_cli_runs_explicit_snapshots_and_writes_a_new_report(
 
     assert captured["input_snapshot"] == input_snapshot
     assert captured["label_snapshot"] == label_snapshot
-    assert captured["args"][-1] == "Description"
-    assert captured["kwargs"]["checkpoint_dir"] == tmp_path / "checkpoints"
-    assert json.loads(output.read_text(encoding="utf-8")) == {
-        "report_schema": "synthetic/v1",
-        "scope_complete": False,
+    assert captured["args"] == (
+        gpkg_path,
+        config_path,
+        lucas_source_config_path,
+        "Description",
+    )
+    assert captured["kwargs"] == {
+        "regions": ["albania", "austria"],
+        "stream_names": ["description"],
+        "taxonomy_level": "detailed",
+        "target_per_label": 3,
+        "seed": 7,
+        "cell_size_metres": 20_000.0,
+        "max_per_cell": 4,
+        "checkpoint_dir": checkpoint_dir,
     }
+    assert output.read_text(encoding="utf-8") == (
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
     assert json.loads(capsys.readouterr().out) == {
         "report": str(output),
         "report_schema": "synthetic/v1",
     }
+
+
+def test_cli_parser_preserves_required_options_and_sampling_defaults(
+    tmp_path: Path,
+):
+    parser = point_runner._build_parser()
+    args = [
+        "--source-snapshot",
+        str(tmp_path / "input"),
+        "--label-snapshot",
+        str(tmp_path / "labels"),
+        "--lucas-gpkg",
+        str(tmp_path / "lucas.gpkg"),
+        "--source",
+        "Description",
+        "--checkpoint-dir",
+        str(tmp_path / "checkpoints"),
+        "--output",
+        str(tmp_path / "report.json"),
+    ]
+    parsed = parser.parse_args(args)
+    assert parser.description == point_runner.__doc__
+    assert parsed.hf_cache_root is None
+    assert parsed.source_snapshot == tmp_path / "input"
+    assert parsed.label_snapshot == tmp_path / "labels"
+    assert parsed.lucas_gpkg == tmp_path / "lucas.gpkg"
+    assert parsed.config == pool_census._CONFIG_PATH
+    assert parsed.lucas_source_config == pool_census._LUCAS_CONFIG_PATH
+    assert parsed.source == "Description"
+    assert parsed.regions is None
+    assert parsed.streams is None
+    assert parsed.taxonomy_level == "main_category"
+    assert parsed.target_per_label == 500
+    assert parsed.seed == 42
+    assert parsed.cell_size_metres == 50_000
+    assert parsed.max_per_cell == 20
+    assert parsed.checkpoint_dir == tmp_path / "checkpoints"
+    assert parsed.output == tmp_path / "report.json"
+
+    for required_option in (
+        "--lucas-gpkg",
+        "--source",
+        "--checkpoint-dir",
+        "--output",
+    ):
+        missing_value = False
+        reduced = []
+        for token in args:
+            if missing_value:
+                missing_value = False
+                continue
+            if token == required_option:
+                missing_value = True
+                continue
+            reduced.append(token)
+        with pytest.raises(SystemExit):
+            parser.parse_args(reduced)
+
+    for source_name in ("Description", "Website", "Wikidata", "all"):
+        source_args = list(args)
+        source_args[source_args.index("Description")] = source_name
+        assert parser.parse_args(source_args).source == source_name
+    invalid_source_args = list(args)
+    invalid_source_args[invalid_source_args.index("Description")] = "website"
+    with pytest.raises(SystemExit):
+        parser.parse_args(invalid_source_args)
 
 
 def test_cli_refuses_to_overwrite_an_existing_report(tmp_path: Path):
