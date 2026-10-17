@@ -2,6 +2,8 @@ import hashlib
 import json
 import platform
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pyarrow
 import pyproj
@@ -26,6 +28,9 @@ from tools.lucas_point_census_domain import (
     payload_sha256,
     point_decision_digest,
     point_result,
+)
+from tools.lucas_point_census_domain import (
+    sample_cohort as sample_cohort_report,
 )
 from tools.lucas_point_sampling import sample_point_sentence_instances
 from tools.lucas_point_source_census import (
@@ -670,7 +675,10 @@ def test_file_sha256_hashes_exact_contents(tmp_path: Path):
 
 @pytest.mark.parametrize("source_name", ["Description", "Website", "Wikidata"])
 def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_polygons(
-    repository_root: Path, tmp_path: Path, source_name: str
+    repository_root: Path,
+    tmp_path: Path,
+    source_name: str,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     config_path = repository_root / "config/lucas-source-pools.json"
     config = pool_census._load_config(config_path)
@@ -699,9 +707,20 @@ def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_po
         ),
         encoding="utf-8",
     )
+    original_read_text = Path.read_text
+    config_read_encodings = []
+
+    def track_lucas_config_encoding(path: Path, *args, **kwargs):
+        if path == lucas_source_config_path:
+            config_read_encodings.append(kwargs.get("encoding"))
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", track_lucas_config_encoding)
     before = {
         path: hashlib.sha256(path.read_bytes()).hexdigest() for path in source_files
     }
+    selected_streams = ["wikipedia"] if source_name == "Wikidata" else None
+    taxonomy_level = "main_category"
 
     report = run_point_source_census(
         input_root,
@@ -711,15 +730,20 @@ def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_po
         lucas_source_config_path,
         source_name,
         regions=[REGION],
+        stream_names=selected_streams,
+        taxonomy_level=taxonomy_level,
         target_per_label=2,
         checkpoint_dir=tmp_path / "checkpoints",
     )
 
     _assert_report_schema(report, source, source_name)
+    expected_streams = selected_streams or [
+        stream["name"] for stream in source["streams"]
+    ]
     assert report["scope"] == {
         "regions": [REGION],
         "configured_region_count": len(config["scope"]["regions"]),
-        "streams": [stream["name"] for stream in source["streams"]],
+        "streams": expected_streams,
         "scope_complete": False,
     }
     assert report["sampling_complete_for_selected_scope"] is False
@@ -742,9 +766,10 @@ def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_po
         "directory": str(tmp_path / "checkpoints"),
         "point_census_reused": False,
         "candidate_checkpoints_reused": 0,
-        "candidate_checkpoints_saved": len(source["streams"]),
+        "candidate_checkpoints_saved": len(expected_streams),
     }
     points = report["point_census"]
+    assert points["taxonomy_level"] == taxonomy_level
     assert points["observation_count"] == 7
     assert points["eligible_polygon_count"] == 1
     assert points["conflict_polygon_count"] == 1
@@ -752,20 +777,15 @@ def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_po
     assert points["outside_observations"] == 1
     assert points["rejection_counts"]["wrong_survey_year"] == 1
     eligible_polygon_id = "osm:way/1" if source_name == "Description" else "poly-a"
-    assert points["eligible_polygon_labels"] == {eligible_polygon_id: "C00"}
+    expected_label = "C00"
+    assert points["eligible_polygon_labels"] == {eligible_polygon_id: expected_label}
     assert points["valid_labeled_observations"] == 4
 
     if source_name == "Wikidata":
-        assert set(report["cohorts"]) == {"wikipedia", "wikivoyage"}
+        assert set(report["cohorts"]) == {"wikipedia"}
         wiki = report["cohorts"]["wikipedia"]["sample"]
-        voyage = report["cohorts"]["wikivoyage"]["sample"]
         assert wiki["eligible_by_label"] == {"yes": 1, "no": 0}
-        assert voyage["eligible_by_label"] == {"yes": 0, "no": 1}
-        selected_ids = {
-            report["cohorts"][name]["selected"][0]["sentence_id"]
-            for name in ("wikipedia", "wikivoyage")
-        }
-        assert len(selected_ids) == 2
+        assert len(report["cohorts"]["wikipedia"]["selected"]) == 1
     else:
         cohort = report["cohorts"][source["streams"][0]["name"]]
         assert cohort["sample"]["eligible_by_label"] == {"yes": 1, "no": 1}
@@ -871,6 +891,11 @@ def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_po
                 ]
             }
 
+    assert config_read_encodings
+    assert all(
+        isinstance(encoding, str) and encoding.lower() == "utf-8"
+        for encoding in config_read_encodings
+    )
     serialized = json.dumps(report, sort_keys=True)
     assert "private fixture" not in serialized
     assert all(
@@ -966,6 +991,11 @@ def test_point_source_checkpoints_resume_without_changing_selected_manifest(
         "stage",
     }
     assert set(asset_checkpoint["result"]) == {"sha256", "size_bytes"}
+    assert asset_checkpoint["identity"]["code_identity"] == {
+        **first["code_and_runtime_identity"],
+        "config_hashes": first["config_hashes"],
+        "taxonomy_level": "main_category",
+    }
     point_checkpoint = next(
         checkpoint
         for checkpoint in checkpoints
@@ -1075,8 +1105,214 @@ def test_point_source_checkpoints_resume_without_changing_selected_manifest(
     assert resumed["checkpointing"]["candidate_checkpoints_reused"] == 1
 
 
+def test_stream_partition_counters_accumulate_across_regions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    context = SimpleNamespace(
+        scope=SimpleNamespace(
+            regions=["albania", "austria", "belgium"],
+            source={"source_id": "website"},
+        ),
+        asset_signature=(1, 2, 3, 4, 5),
+    )
+    saved_regions = {"albania", "belgium"}
+
+    def load_partition(_context, _point_stage, _stream, region, _point_index_sha256):
+        return SimpleNamespace(
+            result={"region": region},
+            fingerprints=[{"region": region}],
+            saved=region in saved_regions,
+        )
+
+    monkeypatch.setattr(
+        point_runner, "_load_or_create_candidate_partition", load_partition
+    )
+    monkeypatch.setattr(
+        pool_census, "_require_asset_signature", lambda _path, _signature: None
+    )
+    partitions = point_runner._run_stream_partitions(
+        cast(point_runner._RunContext, context),
+        cast(point_runner._PointStage, object()),
+        {"name": "website"},
+        "point-index-digest",
+        tmp_path / "lucas.gpkg",
+    )
+
+    assert partitions.saved == 2
+    assert partitions.reused == 1
+    assert [result["region"] for result in partitions.results] == [
+        "albania",
+        "austria",
+        "belgium",
+    ]
+
+
+def test_candidate_stage_accumulates_counts_and_forwards_sampling_options(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    streams = [{"name": "wikipedia"}, {"name": "wikivoyage"}]
+    context = SimpleNamespace(
+        scope=SimpleNamespace(
+            source_name="Wikidata",
+            source={"source_id": "wikidata", "streams": streams},
+            streams=streams,
+        ),
+        options=SimpleNamespace(
+            target_per_label=3,
+            seed=17,
+            cell_size_metres=12_345.0,
+            max_per_cell=4,
+        ),
+        polygon_inputs=SimpleNamespace(fingerprints=[{"path": "geometry.parquet"}]),
+    )
+    point_stage = SimpleNamespace(
+        result={"eligible_polygon_anchors": {"polygon-a": [12.5, 45.5]}},
+        index=object(),
+    )
+    partition_calls = []
+    sample_calls = []
+
+    def fake_partitions(_context, _point_stage, stream, point_index_sha256, _gpkg):
+        partition_calls.append((stream["name"], point_index_sha256))
+        return SimpleNamespace(
+            results=[{"stream": stream["name"]}],
+            receipts={stream["name"]: [{"path": "input.parquet"}]},
+            saved=2,
+            reused=3,
+        )
+
+    def fake_sample(**kwargs):
+        sample_calls.append(kwargs)
+        return {"stream": kwargs["stream_name"]}
+
+    monkeypatch.setattr(point_runner, "_run_stream_partitions", fake_partitions)
+    monkeypatch.setattr(point_runner, "_sample_cohort", fake_sample)
+    stage = point_runner._run_candidate_stage(
+        cast(point_runner._RunContext, context),
+        cast(point_runner._PointStage, point_stage),
+        tmp_path / "lucas.gpkg",
+    )
+
+    assert stage.saved == 4
+    assert stage.reused == 6
+    assert set(stage.cohorts) == {"wikipedia", "wikivoyage"}
+    assert [call[0] for call in partition_calls] == ["wikipedia", "wikivoyage"]
+    assert [call["stream_name"] for call in sample_calls] == [
+        "wikipedia",
+        "wikivoyage",
+    ]
+    assert all(
+        call["seed"] == 17
+        and call["target_per_label"] == 3
+        and call["cell_size_metres"] == 12_345.0
+        and call["max_per_cell"] == 4
+        for call in sample_calls
+    )
+
+
+def test_load_source_scope_preserves_snapshot_guards_and_stream_filter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    config = {"sources": {"Wikidata": {"source_id": "wikidata"}}}
+    source = {
+        "input_repository": "owner/input",
+        "input_revision": "input-rev",
+        "label_repository": "owner/labels",
+        "label_revision": "label-rev",
+        "streams": [{"name": "wikipedia"}, {"name": "wikivoyage"}],
+    }
+    input_snapshot = tmp_path / "input-snapshot"
+    label_snapshot = tmp_path / "label-snapshot"
+    input_root = tmp_path / "resolved-input"
+    label_root = tmp_path / "resolved-labels"
+    checkpoint_root = tmp_path / "checkpoints"
+    checkpoint_args = []
+    scope_args = []
+
+    monkeypatch.setattr(pool_census, "_load_config", lambda _path: config)
+    monkeypatch.setattr(pool_census, "_source_config", lambda _config, _name: source)
+    monkeypatch.setattr(
+        point_runner,
+        "_validate_snapshot_root",
+        lambda snapshot, _repository, _revision: (
+            input_root if snapshot == input_snapshot else label_root
+        ),
+    )
+
+    def validate_checkpoints(directory, *protected_roots):
+        checkpoint_args.append((directory, protected_roots))
+        return checkpoint_root
+
+    def validate_scope(_config, _source, regions, streams):
+        scope_args.append((regions, streams))
+        return ["albania"], [source["streams"][0]], False
+
+    monkeypatch.setattr(
+        point_runner, "_validate_checkpoint_directory", validate_checkpoints
+    )
+    monkeypatch.setattr(point_runner, "_validate_scope", validate_scope)
+    requested_checkpoints = tmp_path / "requested-checkpoints"
+    scope = point_runner._load_source_scope(
+        input_snapshot,
+        label_snapshot,
+        tmp_path / "config.json",
+        "Wikidata",
+        ["albania"],
+        ["wikipedia"],
+        requested_checkpoints,
+    )
+
+    assert scope.streams == [source["streams"][0]]
+    assert scope.checkpoint_root == checkpoint_root
+    assert scope_args == [(["albania"], ["wikipedia"])]
+    assert checkpoint_args == [(requested_checkpoints, (input_root, label_root))]
+
+
+def test_compute_point_result_forwards_selected_taxonomy_level(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    context = SimpleNamespace(
+        scope=SimpleNamespace(source={"source_id": "website"}),
+        polygon_inputs=SimpleNamespace(paths=[]),
+        options=SimpleNamespace(taxonomy_level="detailed"),
+        asset_signature=(1, 2, 3, 4, 5),
+    )
+    captured = {}
+    monkeypatch.setattr(
+        point_runner,
+        "_load_point_polygons",
+        lambda _source, _paths: ([], {"source_polygon_records": 0}),
+    )
+    monkeypatch.setattr(point_runner, "_verify_polygon_inputs", lambda _inputs: None)
+    monkeypatch.setattr(
+        pool_census, "_require_asset_signature", lambda _path, _signature: None
+    )
+    monkeypatch.setattr(
+        point_runner, "iter_lucas_2022_point_observations", lambda _path: iter(())
+    )
+
+    def evaluate(_polygons, _observations, *, taxonomy_level):
+        captured["taxonomy_level"] = taxonomy_level
+        return "synthetic-census"
+
+    monkeypatch.setattr(point_runner, "evaluate_point_census", evaluate)
+    monkeypatch.setattr(
+        point_runner, "_point_result", lambda census, _stats: {"census": census}
+    )
+    monkeypatch.setattr(point_runner, "_write_checkpoint", lambda *_args: None)
+    result = point_runner._compute_point_result(
+        cast(point_runner._RunContext, context),
+        tmp_path / "lucas.gpkg",
+        {"identity": "synthetic"},
+        tmp_path / "point.json",
+    )
+
+    assert captured == {"taxonomy_level": "detailed"}
+    assert result == {"census": "synthetic-census"}
+
+
 def test_checkpoint_write_uses_sorted_utf8_json_and_creates_parent_directories(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     path = tmp_path / "new" / "nested" / "checkpoint.json"
     identity = {"z": "last", "é": "accent", "a": "first"}
@@ -1088,12 +1324,45 @@ def test_checkpoint_write_uses_sorted_utf8_json_and_creates_parent_directories(
         "result": result,
     }
 
+    original_open = Path.open
+    temporary_encodings = []
+
+    def track_temporary_encoding(target: Path, *args, **kwargs):
+        if target.name.endswith(".tmp"):
+            temporary_encodings.append(kwargs.get("encoding"))
+        return original_open(target, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", track_temporary_encoding)
     _write_checkpoint(path, checkpoint["checkpoint_schema"], identity, result)
 
+    assert len(temporary_encodings) == 1
+    assert isinstance(temporary_encodings[0], str)
+    assert temporary_encodings[0].lower() == "utf-8"
     assert path.read_text(encoding="utf-8") == (
         json.dumps(checkpoint, ensure_ascii=False, sort_keys=True) + "\n"
     )
     assert _read_checkpoint(path, checkpoint["checkpoint_schema"], identity) == result
+
+
+def test_checkpoint_read_uses_explicit_utf8_encoding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    path = tmp_path / "checkpoint.json"
+    identity = {"name": "café"}
+    result = {"text": "café"}
+    _write_checkpoint(path, "lucas-test-checkpoint/v1", identity, result)
+    original_read_text = Path.read_text
+    encodings = []
+
+    def track_read_encoding(target: Path, *args, **kwargs):
+        if target == path:
+            encodings.append(kwargs.get("encoding"))
+        return original_read_text(target, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", track_read_encoding)
+    assert _read_checkpoint(path, "lucas-test-checkpoint/v1", identity) == result
+    assert len(encodings) == 1
+    assert isinstance(encodings[0], str) and encodings[0].lower() == "utf-8"
 
 
 def test_checkpoint_write_preserves_original_error_if_temporary_file_creation_fails(
@@ -1292,14 +1561,27 @@ def test_polygon_inventory_counts_exclusions_and_coalesces_only_matching_duplica
     inventory = _PolygonInventory()
     _record_polygon("polygon-a", POLYGON_A, None, "digest-a", inventory)
     _record_polygon("polygon-a", POLYGON_A, None, "digest-a", inventory)
+    _record_polygon("polygon-a", POLYGON_A, None, "digest-a", inventory)
     _record_polygon("polygon-b", None, "invalid_wkb", "digest-b", inventory)
 
-    assert inventory.report()["duplicate_polygon_records_coalesced"] == 1
+    assert inventory.report()["duplicate_polygon_records_coalesced"] == 2
     assert inventory.report()["geometry_exclusions"]["invalid_wkb"] == 1
     assert [polygon.polygon_id for polygon in inventory.polygons()] == ["polygon-a"]
 
     with pytest.raises(ValueError, match="conflicting geometries"):
         _record_polygon("polygon-a", POLYGON_B, None, "different-digest", inventory)
+
+
+def test_polygon_inventory_accumulates_repeated_exclusion_and_duplicate_counts():
+    inventory = _PolygonInventory()
+    for polygon_id in ("invalid-a", "invalid-b"):
+        _record_polygon(polygon_id, None, "invalid_wkb", polygon_id, inventory)
+    _record_polygon("duplicate", POLYGON_A, None, "same", inventory)
+    _record_polygon("duplicate", POLYGON_A, None, "same", inventory)
+    _record_polygon("duplicate", POLYGON_A, None, "same", inventory)
+
+    assert inventory.report()["geometry_exclusions"]["invalid_wkb"] == 2
+    assert inventory.report()["duplicate_polygon_records_coalesced"] == 2
 
 
 @pytest.mark.parametrize("encoding", ["wkb", "geojson"])
@@ -1380,6 +1662,97 @@ def test_missing_source_file_uses_the_pinned_file_change_error(tmp_path: Path):
         point_runner._require_signature(tmp_path / "missing.parquet", (0, 0, 0, 0, 0))
 
 
+def test_region_polygon_ids_must_be_unique():
+    seen = set()
+    point_runner._ensure_region_unique("polygon-a", seen)
+    assert seen == {"polygon-a"}
+    with pytest.raises(ValueError, match="duplicate source polygon identifier"):
+        point_runner._ensure_region_unique("polygon-a", seen)
+
+
+def test_collect_candidates_requests_exact_join_columns_and_keeps_source_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    source = {"source_id": "website", "join_key_fields": ["key"]}
+    text_calls = []
+
+    def text_factory(columns):
+        columns = tuple(columns)
+        text_calls.append(columns)
+        if columns == ("key", "polygon_ids"):
+            return iter([{"key": "candidate", "polygon_ids": ["polygon-a"]}])
+        if columns == ("key",):
+            return iter([{"key": "candidate"}])
+        return iter([])
+
+    monkeypatch.setattr(
+        point_runner,
+        "_direct_labels",
+        lambda _path, _fields: iter(
+            [
+                {
+                    "key": "candidate",
+                    "status": "yes",
+                    "input_revision": "revision-a",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(point_runner, "_parquet_row_count", lambda _path: 1)
+    result = point_runner._collect_candidates(
+        source=source,
+        stream_name="website",
+        region="albania",
+        source_polygon_ids={"polygon-a"},
+        point_index=_PointIndex({"polygon-a": (12.5, 45.5)}),
+        text_factory=text_factory,
+        label_path=tmp_path / "labels.parquet",
+        expected_input_revision="revision-a",
+    )
+
+    assert text_calls == [("key", "polygon_ids"), ("key",)]
+    assert result["duplicate_validation_rows"] == 1
+    assert result["candidates"][0]["polygon_ids"] == ["polygon-a"]
+
+    def unknown_text_factory(_columns):
+        return iter([{"key": "candidate", "polygon_ids": ["unknown"]}])
+
+    with pytest.raises(
+        ValueError, match="website text unit references unknown polygons"
+    ):
+        point_runner._collect_candidates(
+            source=source,
+            stream_name="website",
+            region="albania",
+            source_polygon_ids={"polygon-a"},
+            point_index=_PointIndex({"polygon-a": (12.5, 45.5)}),
+            text_factory=unknown_text_factory,
+            label_path=tmp_path / "labels.parquet",
+            expected_input_revision="revision-a",
+        )
+
+
+def test_empty_candidate_partition_reports_zero_duplicate_validation_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(point_runner, "_direct_labels", lambda _path, _fields: iter(()))
+    monkeypatch.setattr(point_runner, "_parquet_row_count", lambda _path: 0)
+    result = point_runner._collect_candidates(
+        source={"source_id": "website", "join_key_fields": ["key"]},
+        stream_name="website",
+        region="albania",
+        source_polygon_ids={"polygon-a"},
+        point_index=_PointIndex({"polygon-a": (12.5, 45.5)}),
+        text_factory=lambda _columns: iter(()),
+        label_path=tmp_path / "labels.parquet",
+        expected_input_revision="revision-a",
+    )
+
+    assert result["text_unit_rows_scanned"] == 0
+    assert result["duplicate_validation_rows"] == 0
+    assert result["point_eligible_sentence_instances"] == 0
+
+
 def test_wiki_sentence_links_are_coalesced_across_regional_partitions(
     repository_root: Path,
 ):
@@ -1438,6 +1811,52 @@ def test_wiki_sentence_links_are_coalesced_across_regional_partitions(
     assert sample.unique_eligible_polygons == 2
     assert sample.multi_polygon_sentences_anchored == 1
     assert sample.selected[0].anchor_polygon_id == "osm:way/1"
+
+
+def test_sample_cohort_uses_wiki_link_union_and_sampling_options():
+    source = {
+        "source_id": "wikidata",
+        "direct_input": {"schema": "wiki-document-sentences-v1"},
+        "join_key_fields": ["sentence_id"],
+    }
+    partitions = [
+        {
+            "region": region,
+            "stream": "wikipedia",
+            "candidates": [
+                {
+                    "sentence_id": "shared-sentence",
+                    "status": "yes",
+                    "sentence_key": ["shared-sentence"],
+                    "polygon_ids": [polygon_id],
+                    "origin_region": region,
+                }
+            ],
+        }
+        for region, polygon_id in (
+            ("austria", "osm:way/2"),
+            ("albania", "osm:way/1"),
+        )
+    ]
+    cohort = sample_cohort_report(
+        source_name="Wikidata",
+        source=source,
+        stream_name="wikipedia",
+        partition_results=partitions,
+        point_index=_PointIndex({"osm:way/1": (12.5, 45.5), "osm:way/2": (14.5, 45.5)}),
+        target_per_label=1,
+        seed=7,
+        cell_size_metres=12_345.0,
+        max_per_cell=4,
+    )
+
+    assert cohort["repeated_partition_sentence_rows_coalesced"] == 1
+    assert cohort["sample"]["seed"] == 7
+    assert cohort["sample"]["cell_size_metres"] == 12_345.0
+    assert cohort["sample"]["max_per_cell"] == 4
+    assert cohort["sample"]["multi_polygon_sentences_anchored"] == 1
+    assert cohort["selected"][0]["anchor_polygon_id"] == "osm:way/1"
+    assert cohort["selected"][0]["origin_region"] == "albania"
 
 
 def test_wiki_duplicate_sentence_with_conflicting_labels_fails_closed(
@@ -1585,7 +2004,17 @@ def test_cli_runs_explicit_snapshots_and_writes_a_new_report(
     config_path = tmp_path / "source-config.json"
     lucas_source_config_path = tmp_path / "lucas-source-config.json"
     checkpoint_dir = tmp_path / "checkpoints"
-    output = tmp_path / "reports" / "synthetic.json"
+    output = tmp_path / "nested" / "reports" / "synthetic.json"
+    original_open = Path.open
+    output_encodings = []
+
+    def track_output_encoding(path: Path, *args, **kwargs):
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if path == output and mode == "x":
+            output_encodings.append(kwargs.get("encoding"))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", track_output_encoding)
 
     point_runner.main(
         [
@@ -1645,6 +2074,9 @@ def test_cli_runs_explicit_snapshots_and_writes_a_new_report(
     assert output.read_text(encoding="utf-8") == (
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     )
+    assert len(output_encodings) == 1
+    assert isinstance(output_encodings[0], str)
+    assert output_encodings[0].lower() == "utf-8"
     assert json.loads(capsys.readouterr().out) == {
         "report": str(output),
         "report_schema": "synthetic/v1",
@@ -1738,9 +2170,54 @@ def test_cli_refuses_to_overwrite_an_existing_report(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
+    ("protected_output", "expected_error"),
+    [
+        (True, "report output must be separate from protected path"),
+        (False, "checkpoint directory must be separate from protected path"),
+    ],
+)
+def test_cli_rejects_outputs_inside_source_snapshots(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    protected_output: bool,
+    expected_error: str,
+):
+    input_snapshot = tmp_path / "input-snapshot"
+    label_snapshot = tmp_path / "label-snapshot"
+    checkpoint_dir = (
+        tmp_path / "checkpoints" if protected_output else input_snapshot / "checkpoints"
+    )
+    output = (
+        input_snapshot / "report.json" if protected_output else tmp_path / "report.json"
+    )
+
+    with pytest.raises(SystemExit):
+        point_runner.main(
+            [
+                "--source-snapshot",
+                str(input_snapshot),
+                "--label-snapshot",
+                str(label_snapshot),
+                "--lucas-gpkg",
+                str(tmp_path / "lucas.gpkg"),
+                "--source",
+                "Description",
+                "--checkpoint-dir",
+                str(checkpoint_dir),
+                "--output",
+                str(output),
+            ]
+        )
+
+    assert expected_error in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
     "source_args",
     [
         [],
+        ["--source-snapshot", "input"],
+        ["--label-snapshot", "labels"],
         ["--hf-cache-root", "cache", "--source-snapshot", "input"],
     ],
 )
@@ -1772,8 +2249,20 @@ def test_single_source_cli_resolves_pinned_cache_snapshots(
         "label_repository": "owner/labels",
         "label_revision": "label-rev",
     }
-    monkeypatch.setattr(pool_census, "_load_config", lambda _path: {})
-    monkeypatch.setattr(pool_census, "_source_config", lambda _config, _name: source)
+    config_path = tmp_path / "source-config.json"
+    loaded_configs = []
+    resolved_sources = []
+
+    def fake_load_config(path):
+        loaded_configs.append(path)
+        return {"sources": {"Description": source}}
+
+    def fake_source_config(config, name):
+        resolved_sources.append((config, name))
+        return source
+
+    monkeypatch.setattr(pool_census, "_load_config", fake_load_config)
+    monkeypatch.setattr(pool_census, "_source_config", fake_source_config)
     captured = {}
 
     def fake_run(input_snapshot, label_snapshot, *args, **kwargs):
@@ -1787,6 +2276,8 @@ def test_single_source_cli_resolves_pinned_cache_snapshots(
         [
             "--hf-cache-root",
             str(cache_root),
+            "--config",
+            str(config_path),
             "--lucas-gpkg",
             str(tmp_path / "lucas.gpkg"),
             "--source",
@@ -1798,11 +2289,13 @@ def test_single_source_cli_resolves_pinned_cache_snapshots(
         ]
     )
 
-    assert captured["input"] == point_runner._snapshot_under_cache_root(
-        cache_root, "owner/input", "input-rev"
+    assert loaded_configs == [config_path]
+    assert resolved_sources == [({"sources": {"Description": source}}, "Description")]
+    assert captured["input"] == (
+        cache_root / "datasets--owner--input" / "snapshots" / "input-rev"
     )
-    assert captured["labels"] == point_runner._snapshot_under_cache_root(
-        cache_root, "owner/labels", "label-rev"
+    assert captured["labels"] == (
+        cache_root / "datasets--owner--labels" / "snapshots" / "label-rev"
     )
 
 
@@ -1819,6 +2312,41 @@ def test_cli_reports_a_race_when_an_output_file_appears(
         point_runner._write_cli_report(
             tmp_path / "report.json", {"report_schema": "synthetic/v1"}, parser
         )
+
+
+def test_cli_preserves_parser_during_output_race(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    monkeypatch.setattr(
+        point_runner,
+        "run_point_source_census",
+        lambda *_args, **_kwargs: {"report_schema": "synthetic/v1"},
+    )
+
+    def collide(_path, _report):
+        raise FileExistsError
+
+    monkeypatch.setattr(point_runner, "_write_new_json", collide)
+    with pytest.raises(SystemExit):
+        point_runner.main(
+            [
+                "--source-snapshot",
+                str(tmp_path / "input"),
+                "--label-snapshot",
+                str(tmp_path / "labels"),
+                "--lucas-gpkg",
+                str(tmp_path / "lucas.gpkg"),
+                "--source",
+                "Description",
+                "--checkpoint-dir",
+                str(tmp_path / "checkpoints"),
+                "--output",
+                str(tmp_path / "report.json"),
+            ]
+        )
+    assert "refusing to overwrite existing report" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -1978,11 +2506,11 @@ def test_all_source_runner_uses_each_configured_pin_and_combines_scope(
 
     assert loaded_paths == [config_path]
     assert len(calls) == 2
-    assert calls[0][0] == point_runner._snapshot_under_cache_root(
-        tmp_path / "hf-cache", "owner/SourceA-input", "input-SourceA"
+    assert calls[0][0] == (
+        cache_root / "datasets--owner--SourceA-input" / "snapshots" / "input-SourceA"
     )
-    assert calls[1][1] == point_runner._snapshot_under_cache_root(
-        cache_root, "owner/SourceB-labels", "labels-SourceB"
+    assert calls[1][1] == (
+        cache_root / "datasets--owner--SourceB-labels" / "snapshots" / "labels-SourceB"
     )
     default_kwargs = {
         "regions": None,

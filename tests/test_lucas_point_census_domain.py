@@ -11,6 +11,7 @@ from shapely.geometry.base import BaseGeometry
 from tools.lucas_point_census_domain import (
     _outside_crs84,
     _validate_label_join,
+    annotate_selected,
     candidate_partition_report,
     canonical_json,
     coalesce_partition_candidates,
@@ -106,6 +107,28 @@ def test_point_index_rejects_incomplete_checkpoint_maps(anchors, labels, message
             {
                 "eligible_polygon_anchors": anchors,
                 "eligible_polygon_labels": labels,
+            }
+        )
+
+
+@pytest.mark.parametrize("polygon_id", [1, None])
+def test_point_index_rejects_non_text_polygon_ids(polygon_id):
+    with pytest.raises(ValueError, match="invalid polygon anchors"):
+        point_index_from_result(
+            {
+                "eligible_polygon_anchors": {polygon_id: [1.0, 2.0]},
+                "eligible_polygon_labels": {polygon_id: "C10"},
+            }
+        )
+
+
+@pytest.mark.parametrize("label", [1, None, ""])
+def test_point_index_rejects_non_text_or_empty_polygon_labels(label):
+    with pytest.raises(ValueError, match="invalid polygon label"):
+        point_index_from_result(
+            {
+                "eligible_polygon_anchors": {"polygon-a": [1.0, 2.0]},
+                "eligible_polygon_labels": {"polygon-a": label},
             }
         )
 
@@ -206,16 +229,46 @@ def test_label_join_counts_all_rows_and_only_joined_candidates():
         [
             {"key": "candidate-yes", "status": "yes", "input_revision": "r1"},
             {"key": "candidate-no", "status": "no", "input_revision": "r1"},
+            {"key": "candidate-yes-2", "status": "yes", "input_revision": "r1"},
             {"key": "not-eligible", "status": "yes", "input_revision": "r1"},
         ],
         ("key",),
-        {("candidate-yes",), ("candidate-no",)},
+        {("candidate-yes",), ("candidate-no",), ("candidate-yes-2",)},
         "r1",
-        3,
+        4,
     )
-    assert labels == {("candidate-yes",): "yes", ("candidate-no",): "no"}
-    assert source_statuses == Counter(yes=2, no=1)
-    assert joined_statuses == Counter(yes=1, no=1)
+    assert labels == {
+        ("candidate-yes",): "yes",
+        ("candidate-no",): "no",
+        ("candidate-yes-2",): "yes",
+    }
+    assert source_statuses == Counter(yes=3, no=1)
+    assert joined_statuses == Counter(yes=2, no=1)
+
+
+def test_label_join_rejects_candidate_labels_from_another_revision():
+    with pytest.raises(ValueError, match="pinned input revision"):
+        join_candidate_labels(
+            [{"key": "candidate", "status": "yes", "input_revision": "r2"}],
+            ("key",),
+            {("candidate",)},
+            "r1",
+            1,
+        )
+
+
+def test_label_join_rejects_duplicate_point_eligible_label_keys():
+    with pytest.raises(ValueError, match="duplicate point-eligible source label key"):
+        join_candidate_labels(
+            [
+                {"key": "candidate", "status": "yes", "input_revision": "r1"},
+                {"key": "candidate", "status": "no", "input_revision": "r1"},
+            ],
+            ("key",),
+            {("candidate",)},
+            "r1",
+            2,
+        )
 
 
 def test_candidate_partition_report_and_rows_keep_public_schema():
@@ -264,6 +317,15 @@ def test_candidate_text_key_replay_rejects_duplicates_and_row_changes():
     assert (
         validate_text_key_replay(
             [{"key": "candidate"}, {"key": "other"}],
+            ("key",),
+            {("candidate",)},
+            2,
+        )
+        == 2
+    )
+    assert (
+        validate_text_key_replay(
+            [{"key": "other"}, {"key": "candidate"}],
             ("key",),
             {("candidate",)},
             2,
@@ -376,6 +438,19 @@ def test_repeated_partition_sentence_rows_count_every_duplicate():
     ]
     assert metadata["sentence-a"]["origin_region"] == "albania"
     assert repeated_rows == 2
+
+
+def test_selected_annotation_rejects_join_key_arity_changes():
+    selected = [{"sentence_id": "sentence-a"}]
+    metadata = {
+        "sentence-a": {
+            "sentence_key": ["value-a", "value-b"],
+            "origin_region": "albania",
+        }
+    }
+
+    with pytest.raises(ValueError):
+        annotate_selected(selected, metadata, ("only-one-key",))
 
 
 @pytest.mark.parametrize(
