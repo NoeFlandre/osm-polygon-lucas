@@ -193,7 +193,7 @@ class _PolygonGroup:
     missing_label: int = 0
     invalid_label: int = 0
     unmapped_label: int = 0
-    labels: Counter[str] = field(default_factory=Counter)
+    labels: set[str] = field(default_factory=set)
     modes: Counter[str] = field(default_factory=Counter)
 
 
@@ -376,7 +376,7 @@ def _record_polygon_match(
         _record_label_issue(accumulator, group, reason)
         return
     assert label is not None
-    group.labels[label] += 1
+    group.labels.add(label)
     group.valid += 1
     accumulator.valid_labeled_count += 1
 
