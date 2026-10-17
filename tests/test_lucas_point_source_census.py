@@ -1110,7 +1110,7 @@ def test_stream_partition_counters_accumulate_across_regions(
 ):
     context = SimpleNamespace(
         scope=SimpleNamespace(
-            regions=["albania", "austria", "belgium"],
+            regions=["albania", "austria", "belgium", "france"],
             source={"source_id": "website"},
         ),
         asset_signature=(1, 2, 3, 4, 5),
@@ -1139,11 +1139,12 @@ def test_stream_partition_counters_accumulate_across_regions(
     )
 
     assert partitions.saved == 2
-    assert partitions.reused == 1
+    assert partitions.reused == 2
     assert [result["region"] for result in partitions.results] == [
         "albania",
         "austria",
         "belgium",
+        "france",
     ]
 
 
