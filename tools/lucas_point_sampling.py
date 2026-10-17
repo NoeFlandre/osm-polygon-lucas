@@ -8,14 +8,19 @@ from collections import Counter, defaultdict, deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol
 
 from pyproj import Transformer
 
-from osm_polygon_lucas.point_coverage import PointCensus
-
 _CELL_TRANSFORMER = Transformer.from_crs("OGC:CRS84", "EPSG:3035", always_xy=True)
 _LABELS = ("yes", "no")
+
+
+class PointAnchorIndex(Protocol):
+    """The sampler's only dependency on the spatial census result."""
+
+    @property
+    def eligible_polygon_anchors(self) -> Mapping[str, tuple[float, float]]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +82,7 @@ class _QuotaNetwork:
 
 def sample_point_sentence_instances(
     candidates: Iterable[Mapping[str, Any]],
-    point_census: PointCensus,
+    point_census: PointAnchorIndex,
     *,
     source: str,
     target_per_label: int = 500,
