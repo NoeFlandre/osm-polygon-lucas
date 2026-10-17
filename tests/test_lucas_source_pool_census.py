@@ -1,10 +1,15 @@
+import json
+import sys
+
 import pytest
 import shapely
-from shapely.geometry import Point, box
+from shapely.geometry import Point, Polygon, box
 
+from tools import lucas_source_pool_census as census
 from tools.lucas_source_pool_census import (
     _decode_geometry,
     _load_config,
+    _load_source_polygons,
     _manifest_path,
     count_eligible_source_sentences,
     method_report,
@@ -42,6 +47,26 @@ def test_scoped_config_pins_three_sources_and_the_full_area_rule(repository_root
         "invalid_after_projection",
         "zero_area_after_projection",
     ]
+
+
+def test_revision_pins_are_exact_sha1_values_and_reject_the_old_wiki_typo(
+    repository_root, tmp_path
+):
+    config_path = repository_root / "config/lucas-source-pools.json"
+    config = _load_config(config_path)
+    canonical_wiki_pin = "d6fc058ccf4643bc5fe5bfd5c1c0bc403d3da801"
+    assert config["sources"]["Wikidata"]["input_revision"] == canonical_wiki_pin
+    assert len(canonical_wiki_pin) == 40
+
+    malformed = json.loads(config_path.read_text(encoding="utf-8"))
+    malformed["sources"]["Wikidata"]["input_revision"] = (
+        "d6fc058ccf4643bc5fe5bfdc5c1c0bc403d3da801"
+    )
+    malformed_path = tmp_path / "malformed-pins.json"
+    malformed_path.write_text(json.dumps(malformed), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Wikidata input_revision.*40-character"):
+        _load_config(malformed_path)
 
 
 def test_source_join_columns_never_request_sentence_text(repository_root):
@@ -193,6 +218,59 @@ def test_wkb_and_geojson_source_geometry_decoding():
         _decode_geometry(shapely.to_geojson(Point(0.5, 0.5)), "geojson").geom_type
         == "Point"
     )
+
+
+def test_empty_atlas_polygon_is_classified_as_zero_area_before_bounds(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        census,
+        "_verified_table_file",
+        lambda *_args: (tmp_path / "polygons.parquet", {"row_count": 1}),
+    )
+    monkeypatch.setattr(
+        census,
+        "_iter_parquet_rows",
+        lambda _path, _columns: iter(
+            [{"polygon_id": "empty", "geometry": Polygon().wkb}]
+        ),
+    )
+
+    geometries, polygon_ids, exclusions, decisions, _entry = _load_source_polygons(
+        tmp_path, {}, object(), "wkb"
+    )
+
+    assert geometries == []
+    assert polygon_ids == {"empty"}
+    assert exclusions["zero_area"] == 1
+    assert decisions == {"empty": "zero_area"}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--availability-only", "--atlas-root", "unused", "--checkpoint-dir", "unused"],
+        [
+            "--atlas-root",
+            "unused",
+            "--source",
+            "Website",
+            "--lucas-gpkg",
+            "unused",
+            "--output",
+            "unused",
+            "--checkpoint-dir",
+            "unused",
+        ],
+    ],
+)
+def test_cli_rejects_checkpoint_dir_without_direct_snapshots(monkeypatch, arguments):
+    monkeypatch.setattr(sys, "argv", ["lucas_source_pool_census.py", *arguments])
+
+    with pytest.raises(SystemExit) as error:
+        census.main()
+
+    assert error.value.code == 2
 
 
 def test_plan_manifest_paths_keep_wikipedia_and_wikivoyage_streams_separate(tmp_path):

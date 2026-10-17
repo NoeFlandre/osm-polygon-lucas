@@ -26,10 +26,12 @@ A separate local receipt records a 110-partition Europe Description census
 with 4 eligible `yes` and 1 eligible `no` sentence instances. Its checkpoint
 driver is git-ignored, so the Europe aggregate has not passed tracked-run
 reproduction. `tools/lucas_source_pool_census.py` now supports the 110-region
-scope for Description, Website, and Wikidata/Wikipedia source data. Its
-manifest-only mode reports raw source availability; the spatial census remains
-pending while Atlas is active. See `docs/quality/sentence-evaluation-readiness.md`
-for the manifest counts and current gate.
+scope for Description, Website, and Wikidata/Wikipedia source data. It can read
+either Atlas outputs or exact-revision Hugging Face snapshots already present
+in the local Hub cache. Direct mode does not download files, read sentence
+text, or require Atlas. The spatial census has not been run from those
+snapshots; see `docs/quality/sentence-evaluation-readiness.md` for the open
+reproduction gate and manifest counts.
 
 Install the bounded-census dependencies with `uv sync --extra census`. Before
 spatial processing, each runner streams the pinned LUCAS GeoPackage through
@@ -42,6 +44,42 @@ regional scans.
 The `wiki` source is backed by the pinned Wikidata/Wikipedia repository. Atlas
 stores Wikipedia and Wikivoyage sentence streams in separate partitions; the
 census preserves that split and joins each stream by `sentence_id`.
+
+### Direct source snapshots
+
+Direct mode accepts `--source-snapshot` and `--label-snapshot` paths that end
+at `datasets--OWNER--REPO/snapshots/<configured-revision>` in the existing HF
+Hub cache. It validates both repository names and 40-character revisions
+against `config/lucas-source-pools.json`; it never calls the Hub or downloads
+missing files. Select only needed source Parquet columns: Description keys and
+`sentence_count`, Website polygon IDs and sentence counts, Wiki sentence and
+document IDs, geometry, and source-label join fields. The sentence arrays and
+text columns are never requested. Wiki joins through document-to-polygon
+links, and Description polygons use stable `osm:<type>/<id>` keys.
+
+For example, with the two exact snapshots already cached, run one small
+partition with:
+
+```sh
+uv run --locked --extra census python tools/lucas_source_pool_census.py \
+  --source Description \
+  --source-snapshot "$HF_HUB_CACHE/datasets--NoeFlandre--osm-polygon-description-tag/snapshots/b4706eb315c66a8a57135289e7612dca8e03caf8" \
+  --label-snapshot "$HF_HUB_CACHE/datasets--NoeFlandre--osm-polygon-description-tag-landuse/snapshots/ce98b328f3c6543800a3d931877b51eb3f0cf768" \
+  --lucas-gpkg data/raw/l2022_survey_cop_radpoly_attr.gpkg \
+  --region albania --output data/quality/description-albania.json
+```
+
+The direct report records snapshot pins, relative file paths, row counts,
+runtime versions, and deterministic eligibility/decision digests. It contains
+no source sentence text. No direct snapshot census has been run for this PR.
+For long runs, pass `--checkpoint-dir` to save atomic per-region geometry and
+join results outside both HF snapshot roots. Checkpoints are keyed by the pinned
+inputs, LUCAS asset signature, census and coverage-module hashes, package export
+hash, and Python-library plus GEOS/PROJ data versions, so implementation or
+environment changes trigger a fresh calculation.
+Partial-region runs report
+`shortfall_from_target: null`; a numeric shortfall is reported only when all
+configured regions are selected and the eligible pool counts are complete.
 
 The source-label decision and the reference-coverage decision are separate.
 The 500/500 split uses existing source-side relevance labels; it does not use
