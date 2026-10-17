@@ -20,20 +20,27 @@ ALLOWED_STDLIB = {
     "types",
     "typing",
 }
-EXTRA_STDLIB = {"lucas_gpkg": {"contextlib", "pathlib", "sqlite3"}}
+EXTRA_STDLIB = {
+    "lucas_gpkg": {"contextlib", "pathlib", "sqlite3"},
+    "lucas_point_gpkg": {"contextlib", "pathlib", "sqlite3"},
+}
 ALLOWED_THIRD_PARTY = {"shapely"}
 ALLOWED_INTERNAL = {
     "__init__": {
         "lucas_gpkg",
+        "lucas_point_gpkg",
         "lucas_taxonomy",
+        "point_coverage",
         "polygon_coverage",
         "support_eligibility",
     },
     "__main__": {"cli"},
     "cli": {"lucas_gpkg", "lucas_taxonomy", "polygon_coverage", "support_eligibility"},
     "lucas_gpkg": {"support_eligibility"},
+    "lucas_point_gpkg": {"lucas_gpkg", "point_coverage"},
     "lucas_taxonomy": {"polygon_coverage"},
     "polygon_coverage": {"support_eligibility"},
+    "point_coverage": {"lucas_taxonomy", "polygon_coverage", "support_eligibility"},
     "support_eligibility": set(),
 }
 
