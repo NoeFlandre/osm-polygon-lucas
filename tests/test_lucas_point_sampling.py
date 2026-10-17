@@ -170,6 +170,42 @@ def test_feasible_sample_remains_round_robin_across_occupied_cells():
     assert Counter(entry.cell for entry in selected) == dict.fromkeys(cells, 10)
 
 
+def test_partial_sample_spreads_extra_quota_across_remaining_cells():
+    cell_a, cell_b, cell_c = (0, 0), (1, 0), (2, 0)
+    cells = [cell_a, cell_b, cell_c]
+    queues = {
+        "yes": {
+            cell: deque(
+                _Candidate(
+                    f"yes-{cell[0]}-{item}",
+                    "yes",
+                    f"polygon-{cell[0]}",
+                    cell,
+                    f"yes-{cell[0]}-{item}",
+                )
+                for item in range(20)
+            )
+            for cell in cells
+        },
+        "no": {
+            cell_a: deque(
+                _Candidate(f"no-a-{item}", "no", "polygon-0", cell_a, f"no-a-{item}")
+                for item in range(5)
+            )
+        },
+    }
+
+    selected = _round_robin_select(
+        {"yes": cells, "no": [cell_a]},
+        queues,
+        target_per_label=10,
+        max_per_cell=10,
+    )
+
+    assert Counter(entry.relevance for entry in selected) == {"yes": 10, "no": 5}
+    assert {entry.cell for entry in selected} == set(cells)
+
+
 def test_duplicate_sentence_id_with_different_source_data_is_rejected():
     with pytest.raises(ValueError, match="conflicting source rows"):
         sample_point_sentence_instances(

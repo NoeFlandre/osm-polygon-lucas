@@ -448,10 +448,17 @@ def _allocate_cell_counts(
     _seed_quota_network(common_network, common_greedy)
     _maximum_flow(common_network.graph, common_network.source, common_network.sink)
     common_allocations = _read_cell_allocations(common_network)
+    expanded_greedy = _round_robin_allocation(
+        cells_by_label,
+        queues,
+        target_per_label=target_per_label,
+        max_per_cell=max_per_cell,
+        initial_allocations=common_allocations,
+    )
     expanded_network = _build_quota_network(
         cells_by_label, queues, limits, max_per_cell
     )
-    _seed_quota_network(expanded_network, common_allocations)
+    _seed_quota_network(expanded_network, expanded_greedy)
     _maximum_flow(
         expanded_network.graph, expanded_network.source, expanded_network.sink
     )
@@ -464,10 +471,16 @@ def _round_robin_allocation(
     *,
     target_per_label: int,
     max_per_cell: int,
+    initial_allocations: Mapping[str, Mapping[tuple[int, int], int]] | None = None,
 ) -> dict[str, dict[tuple[int, int], int]]:
-    allocations = {label: Counter() for label in _LABELS}
-    selected_counts: Counter[str] = Counter()
+    initial = initial_allocations or {}
+    allocations = {label: Counter(initial.get(label, {})) for label in _LABELS}
+    selected_counts = Counter(
+        {label: sum(allocations[label].values()) for label in _LABELS}
+    )
     cell_counts: Counter[tuple[int, int]] = Counter()
+    for label in _LABELS:
+        cell_counts.update(allocations[label])
     cursors = {label: 0 for label in _LABELS}
     while _needs_samples(selected_counts, target_per_label):
         progress = _allocate_round_robin_round(
