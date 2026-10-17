@@ -625,17 +625,18 @@ def test_point_result_preserves_decision_digest_and_status_contract() -> None:
 
 
 def test_runtime_identity_hashes_exact_code_and_runtime_inputs(
-    repository_root: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    source_root = Path(point_runner.__file__).resolve().parents[1]
     code_paths = {
         "point_census_tool": Path(point_runner.__file__),
-        "point_census_domain": repository_root / "tools/lucas_point_census_domain.py",
+        "point_census_domain": source_root / "tools/lucas_point_census_domain.py",
         "source_pool_tool": Path(pool_census.__file__),
         "direct_snapshot_tool": Path(direct_snapshot.__file__),
-        "point_coverage": repository_root / "src/osm_polygon_lucas/point_coverage.py",
-        "point_gpkg": repository_root / "src/osm_polygon_lucas/lucas_point_gpkg.py",
-        "taxonomy": repository_root / "src/osm_polygon_lucas/lucas_taxonomy.py",
-        "sampling_tool": repository_root / "tools/lucas_point_sampling.py",
+        "point_coverage": source_root / "src/osm_polygon_lucas/point_coverage.py",
+        "point_gpkg": source_root / "src/osm_polygon_lucas/lucas_point_gpkg.py",
+        "taxonomy": source_root / "src/osm_polygon_lucas/lucas_taxonomy.py",
+        "sampling_tool": source_root / "tools/lucas_point_sampling.py",
     }
     monkeypatch.setattr(
         pool_census,
