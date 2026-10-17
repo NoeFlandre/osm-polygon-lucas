@@ -72,6 +72,13 @@ uv run --locked --extra census python tools/lucas_source_pool_census.py \
 The direct report records snapshot pins, relative file paths, row counts,
 runtime versions, and deterministic eligibility/decision digests. It contains
 no source sentence text. No direct snapshot census has been run for this PR.
+For long runs, pass `--checkpoint-dir` to save atomic per-region geometry and
+join results outside both HF snapshot roots. Checkpoints are keyed by the pinned
+inputs, LUCAS asset signature, census and coverage-module hashes, and runtime
+versions, so implementation or environment changes trigger a fresh calculation.
+Partial-region runs report
+`shortfall_from_target: null`; a numeric shortfall is reported only when all
+configured regions are selected and the eligible pool counts are complete.
 
 The source-label decision and the reference-coverage decision are separate.
 The 500/500 split uses existing source-side relevance labels; it does not use

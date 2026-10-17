@@ -892,6 +892,7 @@ def main() -> None:
     parser.add_argument("--atlas-root", type=Path)
     parser.add_argument("--source-snapshot", type=Path)
     parser.add_argument("--label-snapshot", type=Path)
+    parser.add_argument("--checkpoint-dir", type=Path)
     parser.add_argument("--lucas-gpkg", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--config", type=Path, default=_CONFIG_PATH)
@@ -909,10 +910,11 @@ def main() -> None:
             or args.lucas_gpkg
             or args.source_snapshot
             or args.label_snapshot
+            or args.checkpoint_dir
         ):
             parser.error(
                 "availability mode reads all pinned manifests; "
-                "omit source/region/stream/gpkg"
+                "omit source/region/stream/gpkg/checkpoint-dir"
             )
         if args.atlas_root is None:
             parser.error("availability mode requires --atlas-root")
@@ -942,8 +944,11 @@ def main() -> None:
                 args.source,
                 regions=args.regions,
                 stream_names=args.streams,
+                checkpoint_dir=args.checkpoint_dir,
             )
         else:
+            if args.checkpoint_dir is not None:
+                parser.error("--checkpoint-dir requires direct source snapshots")
             if args.atlas_root is None:
                 parser.error(
                     "census mode requires --atlas-root or both pinned source snapshots"

@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 import shapely
@@ -243,6 +244,33 @@ def test_empty_atlas_polygon_is_classified_as_zero_area_before_bounds(
     assert polygon_ids == {"empty"}
     assert exclusions["zero_area"] == 1
     assert decisions == {"empty": "zero_area"}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--availability-only", "--atlas-root", "unused", "--checkpoint-dir", "unused"],
+        [
+            "--atlas-root",
+            "unused",
+            "--source",
+            "Website",
+            "--lucas-gpkg",
+            "unused",
+            "--output",
+            "unused",
+            "--checkpoint-dir",
+            "unused",
+        ],
+    ],
+)
+def test_cli_rejects_checkpoint_dir_without_direct_snapshots(monkeypatch, arguments):
+    monkeypatch.setattr(sys, "argv", ["lucas_source_pool_census.py", *arguments])
+
+    with pytest.raises(SystemExit) as error:
+        census.main()
+
+    assert error.value.code == 2
 
 
 def test_plan_manifest_paths_keep_wikipedia_and_wikivoyage_streams_separate(tmp_path):
