@@ -51,21 +51,21 @@ def test_balanced_sample_is_deterministic_and_groups_sentences_by_polygon():
         candidates,
         census(),
         source="Description",
-        target_per_label=2,
-        max_per_cell=2,
+        target_per_label=3,
+        max_per_cell=3,
     )
     second = sample_point_sentence_instances(
         candidates,
         census(),
         source="Description",
-        target_per_label=2,
-        max_per_cell=2,
+        target_per_label=3,
+        max_per_cell=3,
     )
 
     assert first == second
     assert first.eligible_by_label == {"yes": 3, "no": 2}
-    assert first.selected_by_label == {"yes": 2, "no": 2}
-    assert first.shortfall_by_label == {"yes": 0, "no": 0}
+    assert first.selected_by_label == {"yes": 3, "no": 2}
+    assert first.shortfall_by_label == {"yes": 0, "no": 1}
     assert first.unique_eligible_polygons == 2
     assert first.unique_selected_polygons == 2
     assert first.repeated_source_rows_skipped == 1
