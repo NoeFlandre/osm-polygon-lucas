@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 from shapely.geometry import box
 
@@ -246,7 +248,7 @@ def test_duplicate_source_polygon_ids_and_non_geographic_bounds_are_rejected():
             [polygon(geometry=box(300_000, 5_000_000, 300_010, 5_000_010))], []
         )
     with pytest.raises(ValueError, match="non-empty and unique"):
-        evaluate_point_census([SourcePolygon(17, box(0, 0, 1, 1))], [])
+        evaluate_point_census([SourcePolygon(cast(str, 17), box(0, 0, 1, 1))], [])
 
 
 def test_unknown_taxonomy_level_is_rejected():

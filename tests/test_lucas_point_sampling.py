@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from shapely.geometry import box
 
@@ -116,7 +118,7 @@ def test_duplicate_sentence_id_with_different_source_data_is_rejected():
     ],
 )
 def test_sampling_options_must_be_valid(kwargs, message):
-    options = {"source": "Description", **kwargs}
+    options: dict[str, Any] = {"source": "Description", **kwargs}
     with pytest.raises(ValueError, match=message):
         sample_point_sentence_instances([], census(), **options)
 
