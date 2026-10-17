@@ -74,12 +74,14 @@ runtime versions, and deterministic eligibility/decision digests. It contains
 no source sentence text. No direct snapshot census has been run for this PR.
 For long runs, pass `--checkpoint-dir` to save atomic per-region geometry and
 join results outside both HF snapshot roots. Checkpoints are keyed by the pinned
-inputs, LUCAS asset signature, census and coverage-module hashes, package export
-hash, and Python-library plus GEOS/PROJ data versions, so implementation or
-environment changes trigger a fresh calculation.
-Partial-region runs report
-`shortfall_from_target: null`; a numeric shortfall is reported only when all
-configured regions are selected and the eligible pool counts are complete.
+inputs' content SHA-256 digests, LUCAS asset signature, census and
+coverage-module hashes, package export hash, and Python-library plus GEOS/PROJ
+data versions, so input, implementation, or environment changes trigger a fresh
+calculation. Snapshot files are hashed when checkpointing is enabled; large
+cached files therefore incur a sequential read even when the computed result is
+reused. Stream summaries do not report the source cohort's 500/500 shortfall.
+Only the aggregate reports a numeric shortfall, and only when every configured
+region and stream is selected and the eligible pool counts are complete.
 
 The source-label decision and the reference-coverage decision are separate.
 The 500/500 split uses existing source-side relevance labels; it does not use

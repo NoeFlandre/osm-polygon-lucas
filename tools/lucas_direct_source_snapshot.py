@@ -96,6 +96,36 @@ def _checkpoint_path(
     return root / stage / f"{name}-{digest[:16]}.json", digest
 
 
+def _input_file_fingerprint(
+    path: Path, *, include_content_hash: bool
+) -> tuple[dict[str, Any], tuple[int, int, int, int, int]]:
+    """Fingerprint a file for checkpoints and return its stability signature."""
+    signature = census._asset_signature(path)
+    fingerprint: dict[str, Any] = {"size_bytes": signature[2]}
+    if include_content_hash:
+        fingerprint["sha256"] = census._file_sha256(path)
+    _require_input_file_signature(path, signature)
+    return fingerprint, signature
+
+
+def _require_input_file_signature(
+    path: Path, expected: tuple[int, int, int, int, int]
+) -> None:
+    if not path.is_file() or census._asset_signature(path) != expected:
+        raise ValueError(f"pinned snapshot file changed during the census: {path}")
+
+
+def _complete_source_scope(
+    config: dict[str, Any],
+    source: dict[str, Any],
+    selected_regions: list[str],
+    selected_streams: list[str],
+) -> bool:
+    return set(selected_regions) == set(config["scope"]["regions"]) and set(
+        selected_streams
+    ) == {stream["name"] for stream in source["streams"]}
+
+
 def _read_checkpoint(
     path: Path | None,
     schema: str,
@@ -484,20 +514,26 @@ def _direct_geometry_checkpoint(
         raise FileNotFoundError(
             f"pinned source snapshot file is missing: {polygon_relative}"
         )
+    polygon_fingerprint, polygon_signature = _input_file_fingerprint(
+        polygon_path, include_content_hash=checkpoint_dir is not None
+    )
     identity = {
         **checkpoint_base,
         "stage": "geometry",
         "region": region,
         "stream": None,
         "polygon_path": polygon_relative,
-        "polygon_size_bytes": polygon_path.stat().st_size,
+        "polygon_size_bytes": polygon_fingerprint["size_bytes"],
         "geometry_encoding": source["geometry_encoding"],
     }
+    if "sha256" in polygon_fingerprint:
+        identity["polygon_sha256"] = polygon_fingerprint["sha256"]
     checkpoint_path, checkpoint_id = _checkpoint_path(
         checkpoint_dir, "geometry", identity
     )
     cached = _read_checkpoint(checkpoint_path, "lucas-direct-geometry/v1", identity)
     if cached is not None:
+        _require_input_file_signature(polygon_path, polygon_signature)
         return checkpoint_path, checkpoint_id, identity, cached, True
 
     geometries, polygon_ids, geometry_exclusions, decisions, polygon_rows = (
@@ -508,6 +544,7 @@ def _direct_geometry_checkpoint(
             source["geometry_encoding"],
         )
     )
+    _require_input_file_signature(polygon_path, polygon_signature)
     if geometries:
         (
             eligible,
@@ -632,6 +669,24 @@ def _direct_stream_result(
     if eligible and not label_available:
         missing_inputs.append(label_relative)
 
+    include_content_hash = checkpoint_dir is not None
+    label_fingerprint: dict[str, Any] | None = None
+    label_signature: tuple[int, int, int, int, int] | None = None
+    if label_available:
+        label_fingerprint, label_signature = _input_file_fingerprint(
+            label_path, include_content_hash=include_content_hash
+        )
+    required_text_files = []
+    required_text_signatures: list[tuple[Path, tuple[int, int, int, int, int]]] = []
+    for _name, path, relative in required_text_paths:
+        if not path.is_file():
+            continue
+        fingerprint, signature = _input_file_fingerprint(
+            path, include_content_hash=include_content_hash
+        )
+        required_text_files.append({"name": relative, **fingerprint})
+        required_text_signatures.append((path, signature))
+
     identity = {
         **checkpoint_base,
         "stage": "labels",
@@ -639,19 +694,23 @@ def _direct_stream_result(
         "stream": stream_name,
         "geometry_checkpoint_id": geometry_checkpoint_id,
         "label_path": label_relative,
-        "label_size_bytes": label_path.stat().st_size if label_available else None,
-        "required_text_files": [
-            {"name": relative, "size_bytes": path.stat().st_size}
-            for _name, path, relative in required_text_paths
-            if path.is_file()
-        ],
+        "label_size_bytes": (
+            label_fingerprint["size_bytes"] if label_fingerprint is not None else None
+        ),
+        "required_text_files": required_text_files,
         "missing_inputs": sorted(missing_inputs),
     }
+    if label_fingerprint is not None and "sha256" in label_fingerprint:
+        identity["label_sha256"] = label_fingerprint["sha256"]
     checkpoint_path, _ = _checkpoint_path(checkpoint_dir, "results", identity)
     cached = _read_checkpoint(
         checkpoint_path, "lucas-direct-region-result/v1", identity
     )
     if cached is not None:
+        if label_signature is not None:
+            _require_input_file_signature(label_path, label_signature)
+        for path, signature in required_text_signatures:
+            _require_input_file_signature(path, signature)
         return cached, True, False
 
     key_fields = tuple(source["join_key_fields"])
@@ -781,6 +840,10 @@ def _direct_stream_result(
         "eligibility_decision_sha256": geometry["eligibility_decision_sha256"],
         "geometry_checkpoint_id": geometry_checkpoint_id,
     }
+    if label_signature is not None:
+        _require_input_file_signature(label_path, label_signature)
+    for path, signature in required_text_signatures:
+        _require_input_file_signature(path, signature)
     if eligible_pool_count_complete:
         _write_checkpoint(
             checkpoint_path,
@@ -796,7 +859,7 @@ def _direct_stream_result(
 
 
 def _sum_direct_region_results(
-    results: list[dict[str, Any]], *, shortfall_scope_complete: bool = True
+    results: list[dict[str, Any]], *, shortfall_scope_complete: bool = False
 ) -> dict[str, Any]:
     coverage = Counter()
     geometry = Counter()
@@ -985,8 +1048,8 @@ def run_direct_source_pool_census(
         geometry_saved += int(checkpoint_path is not None and not reused)
         census._require_asset_signature(gpkg_path, asset_signature)
 
-    selected_region_scope_complete = set(selected_regions) == set(
-        config["scope"]["regions"]
+    selected_scope_complete = _complete_source_scope(
+        config, source, selected_regions, selected_streams
     )
     for stream_name, stream in zip(selected_streams, streams, strict=True):
         results = []
@@ -1020,9 +1083,7 @@ def run_direct_source_pool_census(
             results_saved += int(saved)
             census._require_asset_signature(gpkg_path, asset_signature)
         results_by_stream[stream_name] = results
-        summaries[stream_name] = _sum_direct_region_results(
-            results, shortfall_scope_complete=selected_region_scope_complete
-        )
+        summaries[stream_name] = _sum_direct_region_results(results)
     all_results = [
         result
         for stream_results in results_by_stream.values()
@@ -1039,9 +1100,7 @@ def run_direct_source_pool_census(
             "regions": selected_regions,
             "configured_region_count": len(config["scope"]["regions"]),
             "selected_streams": selected_streams,
-            "scope_complete": len(selected_regions) == len(config["scope"]["regions"])
-            and set(selected_streams)
-            == {stream["name"] for stream in source["streams"]},
+            "scope_complete": selected_scope_complete,
         },
         "method": census.method_report(config),
         "source_pins": {
@@ -1103,8 +1162,6 @@ def run_direct_source_pool_census(
         "stream_results": results_by_stream,
         "aggregate_across_selected_streams": _sum_direct_region_results(
             all_results,
-            shortfall_scope_complete=selected_region_scope_complete
-            and set(selected_streams)
-            == {stream["name"] for stream in source["streams"]},
+            shortfall_scope_complete=selected_scope_complete,
         ),
     }

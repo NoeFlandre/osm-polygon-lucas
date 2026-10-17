@@ -2,9 +2,12 @@ from collections import Counter, deque
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from shapely.geometry import box
 
 from osm_polygon_lucas import PointObservation, SourcePolygon, evaluate_point_census
+from tools.lucas_point_census_domain import PointIndex
 from tools.lucas_point_sampling import (
     _Candidate,
     _round_robin_select,
@@ -242,3 +245,53 @@ def test_empty_candidate_set_reports_full_shortfall():
     assert sample.eligible_by_label == {"yes": 0, "no": 0}
     assert sample.selected_by_label == {"yes": 0, "no": 0}
     assert sample.shortfall_by_label == {"yes": 3, "no": 3}
+
+
+@settings(max_examples=60, derandomize=True, deadline=None)
+@given(
+    yes_count=st.integers(min_value=0, max_value=18),
+    no_count=st.integers(min_value=0, max_value=18),
+    target=st.integers(min_value=1, max_value=12),
+    cell_capacity=st.integers(min_value=1, max_value=10),
+)
+def test_sampler_preserves_caps_and_is_input_order_invariant(
+    yes_count, no_count, target, cell_capacity
+):
+    candidates = [
+        {
+            "sentence_id": f"yes-{index}",
+            "status": "yes",
+            "polygon_ids": ["polygon-a"],
+        }
+        for index in range(yes_count)
+    ] + [
+        {
+            "sentence_id": f"no-{index}",
+            "status": "no",
+            "polygon_ids": ["polygon-a"],
+        }
+        for index in range(no_count)
+    ]
+    anchors = PointIndex({"polygon-a": (9.05, 55.05)})
+    options = {
+        "source": "property-test",
+        "target_per_label": target,
+        "seed": 19,
+        "cell_size_metres": 50_000,
+        "max_per_cell": cell_capacity,
+    }
+
+    sample = sample_point_sentence_instances(candidates, anchors, **options)
+    reversed_sample = sample_point_sentence_instances(
+        list(reversed(candidates)), anchors, **options
+    )
+
+    assert sample == reversed_sample
+    selected_ids = [entry.sentence_id for entry in sample.selected]
+    assert len(selected_ids) == len(set(selected_ids))
+    assert all(entry.relevance in {"yes", "no"} for entry in sample.selected)
+    assert all(count <= target for count in sample.selected_by_label.values())
+    assert (
+        max(Counter(entry.cell for entry in sample.selected).values(), default=0)
+        <= cell_capacity
+    )
