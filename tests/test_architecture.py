@@ -200,6 +200,41 @@ def imported_names(module_path: Path) -> list[str]:
 
 def dynamic_imports(module_path: Path) -> list[str]:
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    parents = {
+        child: node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    violations = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "importlib":
+            if any(alias.name == "import_module" for alias in node.names):
+                violations.append("from-importlib import_module alias")
+        if isinstance(node, ast.ImportFrom) and node.module in {
+            "builtins",
+            "__builtin__",
+        }:
+            if any(alias.name == "__import__" for alias in node.names):
+                violations.append("from-builtins __import__ alias")
+        if isinstance(node, ast.Name) and node.id in {"__import__", "import_module"}:
+            violations.append("unapproved dynamic import function")
+        if isinstance(node, ast.Attribute) and node.attr == "__import__":
+            violations.append("unapproved dynamic import function")
+        if isinstance(node, ast.Attribute) and node.attr == "import_module":
+            parent = parents.get(node)
+            if not (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "importlib"
+                and isinstance(parent, ast.Call)
+                and parent.func is node
+            ):
+                violations.append("unapproved import_module reference")
+            elif isinstance(parent, ast.Call) and not (
+                parent.args
+                and isinstance(parent.args[0], ast.Constant)
+                and isinstance(parent.args[0].value, str)
+            ):
+                violations.append("dynamic import target must be a string literal")
     return [
         node.args[0].value
         for node in ast.walk(tree)
@@ -211,7 +246,7 @@ def dynamic_imports(module_path: Path) -> list[str]:
         and node.args
         and isinstance(node.args[0], ast.Constant)
         and isinstance(node.args[0].value, str)
-    ]
+    ] + violations
 
 
 def domain_io_calls(module_path: Path) -> list[str]:
