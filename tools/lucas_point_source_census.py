@@ -50,6 +50,7 @@ from tools.lucas_point_census_domain import (
     join_candidate_labels,
     make_candidate_rows,
     sample_cohort,
+    sample_combined_wiki_cohort,
     validate_text_key_replay,
 )
 from tools.lucas_point_census_domain import (
@@ -72,7 +73,7 @@ from tools.lucas_point_sampling import (
     _validate_sampling_options,
 )
 
-_POINT_SCHEMA = "lucas-point-source-census/v2"
+_POINT_SCHEMA = "lucas-point-source-census/v3"
 _POINT_CHECKPOINT_SCHEMA = "lucas-point-census-checkpoint/v1"
 _CANDIDATE_CHECKPOINT_SCHEMA = "lucas-point-candidate-checkpoint/v1"
 _LABEL_STATUSES = {"yes", "no", "skipped", "failed"}
@@ -918,24 +919,46 @@ def _run_candidate_stage(
         "partitions": {},
     }
     saved = reused = 0
-    for stream in context.scope.streams:
-        partitions = _run_stream_partitions(
-            context, point_stage, stream, point_index_sha256, gpkg_path
-        )
-        cohorts[stream["name"]] = _sample_cohort(
+    source = context.scope.source
+    if source["direct_input"]["schema"] == "wiki-document-sentences-v1":
+        partitions_by_stream = {}
+        for stream in context.scope.streams:
+            partitions = _run_stream_partitions(
+                context, point_stage, stream, point_index_sha256, gpkg_path
+            )
+            partitions_by_stream[stream["name"]] = partitions.results
+            receipts["partitions"].update(partitions.receipts)
+            saved += partitions.saved
+            reused += partitions.reused
+        cohorts[source["source_id"]] = sample_combined_wiki_cohort(
             source_name=context.scope.source_name,
-            source=context.scope.source,
-            stream_name=stream["name"],
-            partition_results=partitions.results,
+            source=source,
+            partition_results_by_stream=partitions_by_stream,
             point_index=point_stage.index,
             target_per_label=context.options.target_per_label,
             seed=context.options.seed,
             h3_resolution=context.options.h3_resolution,
             max_per_cell=context.options.max_per_cell,
         )
-        receipts["partitions"].update(partitions.receipts)
-        saved += partitions.saved
-        reused += partitions.reused
+    else:
+        for stream in context.scope.streams:
+            partitions = _run_stream_partitions(
+                context, point_stage, stream, point_index_sha256, gpkg_path
+            )
+            cohorts[stream["name"]] = _sample_cohort(
+                source_name=context.scope.source_name,
+                source=source,
+                stream_name=stream["name"],
+                partition_results=partitions.results,
+                point_index=point_stage.index,
+                target_per_label=context.options.target_per_label,
+                seed=context.options.seed,
+                h3_resolution=context.options.h3_resolution,
+                max_per_cell=context.options.max_per_cell,
+            )
+            receipts["partitions"].update(partitions.receipts)
+            saved += partitions.saved
+            reused += partitions.reused
     return _CandidateStage(cohorts, receipts, saved, reused)
 
 

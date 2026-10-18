@@ -7,6 +7,12 @@ Each source/reference pair still targets 1,000 sentence instances, split 500
 existing source-relevance `yes` and 500 `no`. Do not pad a shortfall, change a
 label, or loosen a reference rule to force that quota.
 
+For the current bounded LUCAS point evaluation, the user authorized three
+cohorts: Description at 314 `yes` + 314 `no`, Website at 500 + 500, and the
+combined Wikipedia/Wikivoyage source at 500 + 500. This authorization supersedes
+the all-nine sampling gate for those three cohorts only. It does not provide
+results or clear the separate model-output and train/evaluation leakage checks.
+
 ## Three-source LUCAS availability
 
 The tracked `tools/lucas_source_pool_census.py` covers
@@ -171,24 +177,30 @@ Wiki row groups just to fill this gap.
   covers all configured source schemas and supports direct local HF cache
   snapshots, but no full spatial run has been reproduced from that tracked
   path.
-- **Sampling:** H3 resolution 3, seed 42, maximum 20 instances per cell applies
-  only after all nine eligible yes/no pools are measured. No sampling has run.
+- **Sampling:** H3 resolution 3, seed 42, and a maximum of 20 instances per
+  cell apply to the authorized LUCAS cohorts above. Description uses the
+  observed balanced target of 314 per label; Website and combined Wiki target
+  500 per label. The Wiki streams must be deduplicated by `sentence_id` and
+  sampled under one shared quota and cell cap. Report any observed shortfall.
 - **Counts-only compute:** the bounded Description × LUCAS census completed as
   Grid5000 job 3149628 on one CPU core, using code commit
   `a03baebce2b6d53bb4ed439b5c0846da939ccc34`. It performed no sampling or
   inference; its summary remains on Grid home. This run does not clear the
   remaining cohort gates.
-- **Sampling and inference compute:** no inference allocation has started.
-  Complete all nine eligible `yes`/`no` counts and pinned manifests before
-  sampling or requesting compute for sampling/inference. Run the live
-  Grid5000 usage-policy check before each allocation. No external outreach was
-  made.
+- **Inference readiness:** the census checkout does not contain the pinned
+  classifier inference runner or its output parser. The source-label generation
+  prompt is a separate artifact. Do not infer its response schema from the
+  binary classifier, alter existing labels, or report model scores until the
+  exact output contract and train/evaluation overlap have been checked. Run the
+  live Grid5000 usage-policy check before any new allocation. No external
+  outreach was made.
 
-Next, reproduce the source-pool census from exact-pinned local source and label
-snapshots without disturbing Atlas, complete the missing Wikidata/Wikipedia
-streams, freeze the EUNIS threshold and available assignments, obtain the
-missing WorldCover assignments, and report exact per-pair yes/no pools before
-sampling or compute.
+The bounded three-cohort work may proceed on the verified LUCAS checkpoints
+under the explicit authorization above, without disturbing Atlas. The broader
+nine-cohort evaluation still requires completing missing Wiki coverage,
+freezing the EUNIS threshold and available assignments, obtaining the missing
+WorldCover assignments, and reporting exact per-pair pools. No authorization
+for those additional cohorts is implied.
 
 The pinned binary classifier is `place-relevance-v2`, run
 `bc1fdc83579d6793f44d`, public model revision

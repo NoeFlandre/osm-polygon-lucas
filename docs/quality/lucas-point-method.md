@@ -42,6 +42,14 @@ counted once and anchored to the lexically smallest eligible polygon ID. The
 sampler keeps the selected sentence IDs grouped by anchor polygon for clustered
 analysis and reports both sentence and polygon counts.
 
+The Wiki source has Wikipedia and Wikivoyage input streams. Coalesce each
+stream's regional partitions, then merge both streams by their shared
+`sentence_id` key before sampling. Duplicate keys with different labels fail
+the run; matching keys union their polygon links and retain all stream
+provenance. The configured quota and H3 cell cap therefore apply to the combined
+Wiki cohort, while the report keeps per-stream counts and selected-row
+provenance.
+
 The sampler targets 500 `yes` and 500 `no` sentence instances. It assigns each
 eligible anchor point directly to an H3 resolution-3 cell, ranks stable
 source-qualified sentence keys with seed 42, and spreads picks round-robin over

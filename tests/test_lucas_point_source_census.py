@@ -1,6 +1,7 @@
 import hashlib
 import json
 import platform
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -31,6 +32,9 @@ from tools.lucas_point_census_domain import (
 )
 from tools.lucas_point_census_domain import (
     sample_cohort as sample_cohort_report,
+)
+from tools.lucas_point_census_domain import (
+    sample_combined_wiki_cohort as sample_combined_wiki_cohort_report,
 )
 from tools.lucas_point_sampling import sample_point_sentence_instances
 from tools.lucas_point_source_census import (
@@ -304,7 +308,7 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
         "checkpointing",
         "sampling_complete_for_selected_scope",
     }
-    assert report["report_schema"] == "lucas-point-source-census/v2"
+    assert report["report_schema"] == "lucas-point-source-census/v3"
     assert report["source_name"] == source_name
     assert report["source_id"] == source["source_id"]
     assert report["source_display_label"] == source.get("display_label", source_name)
@@ -469,7 +473,7 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
     }
 
     for cohort in report["cohorts"].values():
-        assert set(cohort) == {
+        expected_cohort_fields = {
             "source_name",
             "source_id",
             "stream",
@@ -480,6 +484,13 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
             "selected",
             "selected_manifest",
         }
+        if "streams" in cohort:
+            expected_cohort_fields.update(
+                {"streams", "repeated_cross_stream_sentence_rows_coalesced"}
+            )
+        assert set(cohort) == expected_cohort_fields
+        if "streams" in cohort:
+            assert [row["stream"] for row in cohort["streams"]]
         assert set(cohort["sample"]) == {
             "source",
             "seed",
@@ -513,7 +524,7 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
             "point_eligible_sentence_instances",
         }
         for selected in cohort["selected"]:
-            assert set(selected) == {
+            expected_selected_fields = {
                 "sentence_id",
                 "relevance",
                 "anchor_polygon_id",
@@ -521,6 +532,10 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
                 "natural_key",
                 "origin_region",
             }
+            if "streams" in cohort:
+                expected_selected_fields.add("origin_streams")
+                assert selected["origin_streams"]
+            assert set(selected) == expected_selected_fields
 
 
 def test_point_result_preserves_decision_digest_and_status_contract() -> None:
@@ -785,10 +800,11 @@ def test_point_source_census_joins_pinned_keys_and_samples_only_unanimous_gps_po
     assert points["valid_labeled_observations"] == 4
 
     if source_name == "Wikidata":
-        assert set(report["cohorts"]) == {"wikipedia"}
-        wiki = report["cohorts"]["wikipedia"]["sample"]
+        assert set(report["cohorts"]) == {"wiki"}
+        assert report["cohorts"]["wiki"]["stream"] == "wikipedia"
+        wiki = report["cohorts"]["wiki"]["sample"]
         assert wiki["eligible_by_label"] == {"yes": 1, "no": 0}
-        assert len(report["cohorts"]["wikipedia"]["selected"]) == 1
+        assert len(report["cohorts"]["wiki"]["selected"]) == 1
     else:
         cohort = report["cohorts"][source["streams"][0]["name"]]
         assert cohort["sample"]["eligible_by_label"] == {"yes": 1, "no": 1}
@@ -1151,14 +1167,18 @@ def test_stream_partition_counters_accumulate_across_regions(
     ]
 
 
-def test_candidate_stage_accumulates_counts_and_forwards_sampling_options(
+def test_candidate_stage_samples_wiki_streams_as_one_cohort(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     streams = [{"name": "wikipedia"}, {"name": "wikivoyage"}]
     context = SimpleNamespace(
         scope=SimpleNamespace(
             source_name="Wikidata",
-            source={"source_id": "wikidata", "streams": streams},
+            source={
+                "source_id": "wiki",
+                "streams": streams,
+                "direct_input": {"schema": "wiki-document-sentences-v1"},
+            },
             streams=streams,
         ),
         options=SimpleNamespace(
@@ -1175,6 +1195,7 @@ def test_candidate_stage_accumulates_counts_and_forwards_sampling_options(
     )
     partition_calls = []
     sample_calls = []
+    combined_calls = []
 
     def fake_partitions(_context, _point_stage, stream, point_index_sha256, _gpkg):
         partition_calls.append((stream["name"], point_index_sha256))
@@ -1189,8 +1210,15 @@ def test_candidate_stage_accumulates_counts_and_forwards_sampling_options(
         sample_calls.append(kwargs)
         return {"stream": kwargs["stream_name"]}
 
+    def fake_combined_sample(**kwargs):
+        combined_calls.append(kwargs)
+        return {"stream": "combined"}
+
     monkeypatch.setattr(point_runner, "_run_stream_partitions", fake_partitions)
     monkeypatch.setattr(point_runner, "_sample_cohort", fake_sample)
+    monkeypatch.setattr(
+        point_runner, "sample_combined_wiki_cohort", fake_combined_sample
+    )
     stage = point_runner._run_candidate_stage(
         cast(point_runner._RunContext, context),
         cast(point_runner._PointStage, point_stage),
@@ -1199,19 +1227,19 @@ def test_candidate_stage_accumulates_counts_and_forwards_sampling_options(
 
     assert stage.saved == 4
     assert stage.reused == 6
-    assert set(stage.cohorts) == {"wikipedia", "wikivoyage"}
+    assert set(stage.cohorts) == {"wiki"}
     assert [call[0] for call in partition_calls] == ["wikipedia", "wikivoyage"]
-    assert [call["stream_name"] for call in sample_calls] == [
+    assert sample_calls == []
+    assert len(combined_calls) == 1
+    combined = combined_calls[0]
+    assert list(combined["partition_results_by_stream"]) == [
         "wikipedia",
         "wikivoyage",
     ]
-    assert all(
-        call["seed"] == 17
-        and call["target_per_label"] == 3
-        and call["h3_resolution"] == 7
-        and call["max_per_cell"] == 4
-        for call in sample_calls
-    )
+    assert combined["seed"] == 17
+    assert combined["target_per_label"] == 3
+    assert combined["h3_resolution"] == 7
+    assert combined["max_per_cell"] == 4
 
 
 def test_load_source_scope_preserves_snapshot_guards_and_stream_filter(
@@ -1862,6 +1890,213 @@ def test_sample_cohort_uses_wiki_link_union_and_sampling_options():
     assert cohort["sample"]["multi_polygon_sentences_anchored"] == 1
     assert cohort["selected"][0]["anchor_polygon_id"] == "osm:way/1"
     assert cohort["selected"][0]["origin_region"] == "albania"
+
+
+def test_combined_wiki_sample_shares_quota_and_cell_cap_across_streams():
+    source = {
+        "source_id": "wiki",
+        "direct_input": {"schema": "wiki-document-sentences-v1"},
+        "join_key_fields": ["sentence_id"],
+    }
+    anchors = _PointIndex(
+        {
+            "osm:way/1": (12.5, 45.5),
+            "osm:way/2": (-2.5, 40.5),
+        }
+    )
+
+    def partition(stream: str, prefix: str) -> dict:
+        candidates = []
+        for relevance in ("yes", "no"):
+            for index, polygon_id in enumerate(("osm:way/1", "osm:way/2")):
+                key = f"{prefix}-{relevance}-{index}"
+                candidates.append(
+                    {
+                        "sentence_id": f"{stream}-{key}",
+                        "sentence_key": [key],
+                        "status": relevance,
+                        "polygon_ids": [polygon_id],
+                        "origin_region": "albania",
+                    }
+                )
+        return {
+            "region": "albania",
+            "stream": stream,
+            "text_unit_rows_scanned": len(candidates),
+            "duplicate_validation_rows": len(candidates),
+            "source_label_rows": {"no": 2, "yes": 2},
+            "joined_to_point_eligible_polygons": {"no": 2, "yes": 2},
+            "not_joined_to_point_eligible_polygons": {"no": 0, "yes": 0},
+            "point_eligible_sentence_instances": len(candidates),
+            "candidates": candidates,
+        }
+
+    partitions = {
+        "wikipedia": [partition("wikipedia", "wp")],
+        "wikivoyage": [partition("wikivoyage", "wv")],
+    }
+    kwargs = {
+        "source_name": "Wikidata",
+        "source": source,
+        "partition_results_by_stream": partitions,
+        "point_index": anchors,
+        "target_per_label": 2,
+        "seed": 42,
+        "h3_resolution": 3,
+        "max_per_cell": 2,
+    }
+
+    first = sample_combined_wiki_cohort_report(**kwargs)
+    second = sample_combined_wiki_cohort_report(**kwargs)
+    reversed_streams = sample_combined_wiki_cohort_report(
+        source_name="Wikidata",
+        source=source,
+        partition_results_by_stream=dict(reversed(partitions.items())),
+        point_index=anchors,
+        target_per_label=2,
+        seed=42,
+        h3_resolution=3,
+        max_per_cell=2,
+    )
+
+    assert first["sample"]["selected_by_label"] == {"yes": 2, "no": 2}
+    assert first["sample"]["eligible_by_label"] == {"yes": 4, "no": 4}
+    cells = Counter(row["cell"] for row in first["selected"])
+    assert len(cells) == 2
+    assert set(cells.values()) == {2}
+    assert first["selected_manifest"] == second["selected_manifest"]
+    assert first["selected_manifest"] == reversed_streams["selected_manifest"]
+    assert {row["origin_streams"][0] for row in first["selected"]} <= {
+        "wikipedia",
+        "wikivoyage",
+    }
+    assert [row["stream"] for row in first["streams"]] == [
+        "wikipedia",
+        "wikivoyage",
+    ]
+
+
+def test_combined_wiki_sample_requires_at_least_one_stream():
+    with pytest.raises(ValueError, match="requires at least one stream"):
+        sample_combined_wiki_cohort_report(
+            source_name="Wikidata",
+            source={
+                "source_id": "wiki",
+                "direct_input": {"schema": "wiki-document-sentences-v1"},
+                "join_key_fields": ["sentence_id"],
+            },
+            partition_results_by_stream={},
+            point_index=_PointIndex({}),
+            target_per_label=1,
+            seed=42,
+            h3_resolution=3,
+            max_per_cell=2,
+        )
+
+
+def test_combined_wiki_sample_coalesces_cross_stream_sentence_keys():
+    source = {
+        "source_id": "wiki",
+        "direct_input": {"schema": "wiki-document-sentences-v1"},
+        "join_key_fields": ["sentence_id"],
+    }
+    base_partition = {
+        "region": "austria",
+        "text_unit_rows_scanned": 1,
+        "duplicate_validation_rows": 1,
+        "source_label_rows": {"yes": 1},
+        "joined_to_point_eligible_polygons": {"yes": 1},
+        "not_joined_to_point_eligible_polygons": {"yes": 0},
+        "point_eligible_sentence_instances": 1,
+    }
+    partitions = {
+        "wikipedia": [
+            {
+                **base_partition,
+                "stream": "wikipedia",
+                "candidates": [
+                    {
+                        "sentence_id": "wikipedia-shared",
+                        "sentence_key": ["shared"],
+                        "status": "yes",
+                        "polygon_ids": ["osm:way/2"],
+                        "origin_region": "zambia",
+                    }
+                ],
+            }
+        ],
+        "wikivoyage": [
+            {
+                **base_partition,
+                "stream": "wikivoyage",
+                "candidates": [
+                    {
+                        "sentence_id": "wikivoyage-shared",
+                        "sentence_key": ["shared"],
+                        "status": "yes",
+                        "polygon_ids": ["osm:way/1"],
+                        "origin_region": "albania",
+                    }
+                ],
+            }
+        ],
+    }
+
+    cohort = sample_combined_wiki_cohort_report(
+        source_name="Wikidata",
+        source=source,
+        partition_results_by_stream=partitions,
+        point_index=_PointIndex({"osm:way/1": (12.5, 45.5), "osm:way/2": (-2.5, 40.5)}),
+        target_per_label=1,
+        seed=42,
+        h3_resolution=3,
+        max_per_cell=2,
+    )
+
+    assert cohort["repeated_cross_stream_sentence_rows_coalesced"] == 1
+    assert cohort["point_eligible_sentence_instances_by_status"] == {"yes": 1}
+    assert cohort["selected"][0]["natural_key"] == {"sentence_id": "shared"}
+    assert cohort["selected"][0]["origin_region"] == "albania"
+    assert cohort["selected"][0]["origin_streams"] == [
+        "wikipedia",
+        "wikivoyage",
+    ]
+
+
+def test_combined_wiki_sample_rejects_cross_stream_label_conflicts():
+    source = {
+        "source_id": "wiki",
+        "direct_input": {"schema": "wiki-document-sentences-v1"},
+        "join_key_fields": ["sentence_id"],
+    }
+    partitions = {
+        stream: [
+            {
+                "candidates": [
+                    {
+                        "sentence_id": f"{stream}-shared",
+                        "sentence_key": ["shared"],
+                        "status": status,
+                        "polygon_ids": ["osm:way/1"],
+                        "origin_region": "albania",
+                    }
+                ]
+            }
+        ]
+        for stream, status in (("wikipedia", "yes"), ("wikivoyage", "no"))
+    }
+
+    with pytest.raises(ValueError, match="conflicting sentence labels"):
+        sample_combined_wiki_cohort_report(
+            source_name="Wikidata",
+            source=source,
+            partition_results_by_stream=partitions,
+            point_index=_PointIndex({"osm:way/1": (12.5, 45.5)}),
+            target_per_label=1,
+            seed=42,
+            h3_resolution=3,
+            max_per_cell=2,
+        )
 
 
 def test_wiki_duplicate_sentence_with_conflicting_labels_fails_closed(
@@ -2535,7 +2770,7 @@ def test_all_source_runner_uses_each_configured_pin_and_combines_scope(
     )
     assert report["scope_complete"] is scope_complete
     assert set(report["source_runs"]) == {"SourceA", "SourceB"}
-    assert report["report_schema"] == "lucas-point-source-census/v2"
+    assert report["report_schema"] == "lucas-point-source-census/v3"
 
     calls.clear()
     custom_options = {

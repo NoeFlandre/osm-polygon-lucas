@@ -630,6 +630,179 @@ def sample_cohort(
     )
 
 
+def sample_combined_wiki_cohort(
+    *,
+    source_name: str,
+    source: dict[str, Any],
+    partition_results_by_stream: Mapping[str, list[dict[str, Any]]],
+    point_index: PointIndex,
+    target_per_label: int,
+    seed: int,
+    h3_resolution: int,
+    max_per_cell: int,
+) -> dict[str, Any]:
+    """Coalesce Wiki streams by source key, then sample them as one cohort."""
+    if not partition_results_by_stream:
+        raise ValueError("combined Wiki sampling requires at least one stream")
+    source_id = source["source_id"]
+    (
+        candidates,
+        metadata,
+        stream_summaries,
+        partition_results,
+        repeated_partition_rows,
+        repeated_cross_stream_rows,
+    ) = _coalesce_wiki_streams(source, partition_results_by_stream)
+    sample = sample_point_sentence_instances(
+        candidates,
+        point_index,
+        source=f"{source_id}/combined",
+        target_per_label=target_per_label,
+        seed=seed,
+        h3_resolution=h3_resolution,
+        max_per_cell=max_per_cell,
+    )
+    report = sample_report(sample)
+    _annotate_combined_wiki_selection(report["selected"], metadata, source)
+
+    return {
+        "source_name": source_name,
+        "source_id": source_id,
+        "stream": _wiki_cohort_stream_label(stream_summaries),
+        "streams": stream_summaries,
+        "partition_results": partition_receipts(partition_results),
+        "point_eligible_sentence_instances_by_status": dict(
+            sorted(Counter(row["status"] for row in metadata.values()).items())
+        ),
+        "repeated_partition_sentence_rows_coalesced": repeated_partition_rows,
+        "repeated_cross_stream_sentence_rows_coalesced": repeated_cross_stream_rows,
+        "sample": report,
+        "selected": report["selected"],
+        "selected_manifest": {
+            "key_fields": list(source["join_key_fields"]),
+            "entries": report["selected"],
+        },
+    }
+
+
+def _coalesce_wiki_streams(
+    source: dict[str, Any],
+    partition_results_by_stream: Mapping[str, list[dict[str, Any]]],
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    int,
+]:
+    stream_summaries: list[dict[str, Any]] = []
+    partition_results: list[dict[str, Any]] = []
+    candidates_by_id: dict[str, dict[str, Any]] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    repeated_partition_rows = 0
+    repeated_cross_stream_rows = 0
+
+    for stream_name, stream_partitions in partition_results_by_stream.items():
+        _, stream_metadata, repeated_rows = coalesce_partition_candidates(
+            source["direct_input"]["schema"], stream_partitions
+        )
+        repeated_partition_rows += repeated_rows
+        partition_results.extend(stream_partitions)
+        stream_summaries.append(
+            {
+                "stream": stream_name,
+                "point_eligible_sentence_instances_by_status": dict(
+                    sorted(
+                        Counter(
+                            row["status"] for row in stream_metadata.values()
+                        ).items()
+                    )
+                ),
+                "repeated_partition_sentence_rows_coalesced": repeated_rows,
+            }
+        )
+
+        for row in stream_metadata.values():
+            repeated_cross_stream_rows += _merge_wiki_stream_row(
+                source["source_id"],
+                stream_name,
+                row,
+                candidates_by_id,
+                metadata,
+            )
+
+    candidates = [candidates_by_id[key] for key in sorted(candidates_by_id)]
+    return (
+        candidates,
+        metadata,
+        stream_summaries,
+        partition_results,
+        repeated_partition_rows,
+        repeated_cross_stream_rows,
+    )
+
+
+def _merge_wiki_stream_row(
+    source_id: str,
+    stream_name: str,
+    row: dict[str, Any],
+    candidates: dict[str, dict[str, Any]],
+    metadata: dict[str, dict[str, Any]],
+) -> int:
+    sentence_id = canonical_json([source_id, row["sentence_key"]])
+    previous = metadata.get(sentence_id)
+    if previous is None:
+        merged = {
+            **row,
+            "sentence_id": sentence_id,
+            "polygon_ids": sorted(set(row["polygon_ids"])),
+            "origin_streams": {stream_name},
+        }
+        metadata[sentence_id] = merged
+        candidates[sentence_id] = {
+            "sentence_id": sentence_id,
+            "status": row["status"],
+            "polygon_ids": merged["polygon_ids"],
+        }
+        return 0
+    _merge_existing_wiki_stream_row(previous, row, stream_name)
+    candidates[sentence_id]["polygon_ids"] = previous["polygon_ids"]
+    return 1
+
+
+def _merge_existing_wiki_stream_row(
+    previous: dict[str, Any], row: dict[str, Any], stream_name: str
+) -> None:
+    if previous["status"] != row["status"]:
+        raise ValueError("Wiki streams contain conflicting sentence labels")
+    previous["polygon_ids"] = sorted(
+        set(previous["polygon_ids"]) | set(row["polygon_ids"])
+    )
+    previous["origin_region"] = min(previous["origin_region"], row["origin_region"])
+    previous["origin_streams"].add(stream_name)
+
+
+def _annotate_combined_wiki_selection(
+    selected: list[dict[str, Any]],
+    metadata: Mapping[str, dict[str, Any]],
+    source: dict[str, Any],
+) -> None:
+    for row in selected:
+        candidate = metadata[row["sentence_id"]]
+        row["natural_key"] = dict(
+            zip(source["join_key_fields"], candidate["sentence_key"], strict=True)
+        )
+        row["origin_region"] = candidate["origin_region"]
+        row["origin_streams"] = sorted(candidate["origin_streams"])
+
+
+def _wiki_cohort_stream_label(stream_summaries: list[dict[str, Any]]) -> str:
+    if len(stream_summaries) == 1:
+        return stream_summaries[0]["stream"]
+    return "combined"
+
+
 def _cohort_report(
     source_name: str,
     source: dict[str, Any],
