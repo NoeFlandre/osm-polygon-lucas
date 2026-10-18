@@ -9,8 +9,6 @@ NEW_PRODUCTION_FILES = (
     ROOT_DIR / "tools" / "lucas_point_census_domain.py",
     ROOT_DIR / "tools" / "lucas_point_source_census.py",
 )
-# This is the established core/domain scope. Orchestration modules have
-# separate architecture and mutation checks; see code-quality-gates.md.
 MAX_COMPLEXITY = 5
 
 
