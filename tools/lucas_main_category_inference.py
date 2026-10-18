@@ -1229,9 +1229,13 @@ def run(args: argparse.Namespace) -> int:
     runtime_project = args.runtime_project.resolve()
     runtime_info_path = args.runtime_info.resolve()
     publish_root = (output_root / "publish").resolve()
-    if scratch_root == publish_root or publish_root in scratch_root.parents:
+    resolved_scratch_root = (scratch_root / "resolved").resolve()
+    if (
+        resolved_scratch_root == publish_root
+        or publish_root in resolved_scratch_root.parents
+    ):
         raise ValueError(
-            "source-text scratch root cannot overlap the output publish directory"
+            "resolved source-text path cannot overlap the output publish directory"
         )
     runtime_info = _read_json(runtime_info_path)
     runtime_info_sha256 = _validate_runtime_info(runtime_info, runtime_project)

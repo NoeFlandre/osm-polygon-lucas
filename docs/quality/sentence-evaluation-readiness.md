@@ -206,9 +206,10 @@ Wiki row groups just to fill this gap.
   and lock hashes, validates Python/PyTorch/CUDA/Transformers/Hub/PyArrow pins
   and GPU capability, and writes job-specific runtime metadata. Downloaded
   source Parquet, resolved sentence text, and model cache stay in
-  allocation-local scratch. The runner rejects a scratch root inside the
-  `output/publish` tree. Checkpoints and publication artifacts omit source text
-  and raw completions. No LUCAS inference or score publication has been
+  allocation-local scratch. The runner resolves and rejects a source-text
+  output path inside the `output/publish` tree, including symlinked paths.
+  Checkpoints and publication artifacts omit source text and raw completions.
+  No LUCAS inference or score publication has been
   performed by this change. Review train/evaluation overlap before interpreting
   any future score. The source-label generation prompt remains a separate
   artifact. Run the live Grid5000 usage-policy and capacity checks before a new

@@ -452,10 +452,36 @@ def test_run_rejects_source_scratch_inside_publish_directory(tmp_path):
         runtime_info=tmp_path / "missing-runtime-info.json",
     )
 
-    with pytest.raises(ValueError, match="source-text scratch root.*publish directory"):
+    with pytest.raises(
+        ValueError, match="resolved source-text path.*publish directory"
+    ):
         runner.run(args)
 
     assert not output_root.exists()
+
+
+def test_run_rejects_resolved_scratch_symlink_to_publish_directory(tmp_path):
+    output_root = tmp_path / "output"
+    publish_root = output_root / "publish"
+    publish_root.mkdir(parents=True)
+    scratch_root = tmp_path / "scratch"
+    scratch_root.mkdir()
+    (scratch_root / "resolved").symlink_to(publish_root, target_is_directory=True)
+    args = Namespace(
+        manifest_root=tmp_path / "manifests",
+        config=tmp_path / "config.json",
+        output_root=output_root,
+        scratch_root=scratch_root,
+        runtime_project=tmp_path / "runtime",
+        runtime_info=tmp_path / "missing-runtime-info.json",
+    )
+
+    with pytest.raises(
+        ValueError, match="resolved source-text path.*publish directory"
+    ):
+        runner.run(args)
+
+    assert list(publish_root.iterdir()) == []
 
 
 def test_grid5000_launcher_pins_the_inference_runner_hash():
