@@ -85,6 +85,23 @@ def test_balanced_sample_is_deterministic_and_groups_sentences_by_polygon():
     assert "yes-3" in first.selected_sentence_ids_by_polygon.get("polygon-a", ())
 
 
+def test_default_sampler_uses_the_pinned_h3_grid():
+    sample = sample_point_sentence_instances(
+        [
+            {"sentence_id": "yes-1", "status": "yes", "polygon_ids": ["anchor"]},
+            {"sentence_id": "no-1", "status": "no", "polygon_ids": ["anchor"]},
+        ],
+        PointIndex({"anchor": (-122.388903, 37.769377)}),
+        source="regression",
+        target_per_label=1,
+    )
+
+    assert sample.seed == 42
+    assert sample.h3_resolution == 3
+    assert sample.max_per_cell == 20
+    assert {entry.cell for entry in sample.selected} == {"832830fffffffff"}
+
+
 def test_geographic_cell_cap_reports_a_real_class_shortfall():
     sample = sample_point_sentence_instances(
         [
