@@ -971,10 +971,9 @@ def test_point_source_checkpoints_resume_without_changing_selected_manifest(
         expected_checkpoint_keys = {
             "checkpoint_schema",
             "identity",
+            "result_sha256",
             "result",
         }
-        if checkpoint["checkpoint_schema"] != "lucas-asset-verification/v1":
-            expected_checkpoint_keys.add("result_sha256")
         assert set(checkpoint) == expected_checkpoint_keys
     asset_checkpoint = next(
         checkpoint
