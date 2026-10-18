@@ -191,13 +191,27 @@ Wiki row groups just to fill this gap.
   run requires explicit authorization, pinned inputs and code, and live policy,
   capacity, and storage checks. A counts-only result would not clear the
   remaining cohort gates.
-- **Inference readiness:** the census checkout does not contain the pinned
-  classifier inference runner or its output parser. The source-label generation
-  prompt is a separate artifact. Do not infer its response schema from the
-  binary classifier, alter existing labels, or report model scores until the
-  exact output contract and train/evaluation overlap have been checked. Run the
-  live Grid5000 usage-policy check before any new allocation. No external
-  outreach was made.
+- **Bounded LUCAS inference:** `tools/lucas_main_category_inference.py` and
+  `scripts/run_lucas_main_category_grid5000.sh` implement the separate
+  main-category task. The target is `target_label` at `main_category`, with
+  exactly one final choice in the form
+  `Final LUCAS main_category: CODE` after `</think>`; relevance is sampling
+  metadata only. The pinned model is
+  `LiquidAI/LFM2.5-2.6B@654f9463ce32b05d0429d76fe1f580b27d4c1ac0`, using BF16,
+  greedy decoding, seed 0, batches of 16, and at most 4096 new tokens. Synthetic
+  tests cover the parser, source adapters, malformed revision rejection,
+  runtime contract, checkpoint privacy, and launcher syntax. They do not
+  substitute for hosted CI or a completed inference run.
+- **Inference provenance:** the launcher requires the audited runtime project
+  and lock hashes, validates Python/PyTorch/CUDA/Transformers/Hub/PyArrow pins
+  and GPU capability, and writes job-specific runtime metadata. Downloaded
+  source Parquet, resolved sentence text, and model cache stay in
+  allocation-local scratch. Checkpoints and publication artifacts omit source
+  text and raw completions. No LUCAS inference or score publication has been
+  performed by this change. Review train/evaluation overlap before interpreting
+  any future score. The source-label generation prompt remains a separate
+  artifact. Run the live Grid5000 usage-policy and capacity checks before a new
+  allocation. No external outreach was made.
 
 The bounded three-cohort work may proceed on the verified LUCAS checkpoints
 under the explicit authorization above, without disturbing Atlas. The broader

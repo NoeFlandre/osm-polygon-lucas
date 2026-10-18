@@ -4,6 +4,27 @@ from pathlib import Path
 PACKAGE_DIR = Path(__file__).resolve().parents[1] / "src" / "osm_polygon_lucas"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TOOL_MODULES = {
+    "lucas_main_category_inference": {
+        "__future__",
+        "argparse",
+        "collections",
+        "collections.abc",
+        "fcntl",
+        "hashlib",
+        "huggingface_hub",
+        "importlib.metadata",
+        "json",
+        "landuse_relevance_bench.adapters.choice_constraint",
+        "os",
+        "pathlib",
+        "pyarrow.parquet",
+        "re",
+        "sys",
+        "torch",
+        "transformers",
+        "typing",
+        "uuid",
+    },
     "lucas_description_census": {
         "__future__",
         "argparse",
@@ -116,6 +137,7 @@ TOOL_MODULES = {
     },
 }
 ALLOWED_DYNAMIC_IMPORTS = {
+    "lucas_main_category_inference": set(),
     "lucas_description_census": {"pyarrow", "pyproj"},
     "lucas_direct_source_snapshot": {
         "pyarrow",
