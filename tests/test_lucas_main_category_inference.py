@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 import pyarrow as pa
@@ -438,6 +439,23 @@ def test_grid5000_launcher_has_valid_shell_syntax():
         ["bash", "-n", str(LAUNCHER_PATH)], capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_run_rejects_source_scratch_inside_publish_directory(tmp_path):
+    output_root = tmp_path / "output"
+    args = Namespace(
+        manifest_root=tmp_path / "manifests",
+        config=tmp_path / "config.json",
+        output_root=output_root,
+        scratch_root=output_root / "publish" / "source-scratch",
+        runtime_project=tmp_path / "runtime",
+        runtime_info=tmp_path / "missing-runtime-info.json",
+    )
+
+    with pytest.raises(ValueError, match="source-text scratch root.*publish directory"):
+        runner.run(args)
+
+    assert not output_root.exists()
 
 
 def test_grid5000_launcher_pins_the_inference_runner_hash():
