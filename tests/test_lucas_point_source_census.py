@@ -1969,7 +1969,7 @@ def test_combined_wiki_sample_shares_quota_and_cell_cap_across_streams():
         "partition_results_by_stream": partitions,
         "point_index": anchors,
         "target_per_label": 6,
-        "seed": 42,
+        "seed": 17,
         "h3_resolution": 7,
         "max_per_cell": 2,
     }
@@ -1982,13 +1982,13 @@ def test_combined_wiki_sample_shares_quota_and_cell_cap_across_streams():
         partition_results_by_stream=dict(reversed(partitions.items())),
         point_index=anchors,
         target_per_label=6,
-        seed=42,
+        seed=17,
         h3_resolution=7,
         max_per_cell=2,
     )
 
     assert first["sample"]["source"] == "wiki/combined"
-    assert first["sample"]["seed"] == 42
+    assert first["sample"]["seed"] == 17
     assert first["sample"]["target_per_label"] == 6
     assert first["sample"]["h3_resolution"] == 7
     assert first["sample"]["max_per_cell"] == 2
