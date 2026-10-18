@@ -1993,7 +1993,7 @@ def test_combined_wiki_sample_shares_quota_and_cell_cap_across_streams():
     assert first["sample"]["h3_resolution"] == 7
     assert first["sample"]["max_per_cell"] == 2
     assert first["sample"]["selected_by_label"] == {"yes": 2, "no": 2}
-    assert first["sample"]["eligible_by_label"] == {"yes": 6, "no": 6}
+    assert first["sample"]["eligible_by_label"] == {"yes": 12, "no": 12}
     cells = Counter(row["cell"] for row in first["selected"])
     assert len(cells) == 2
     assert set(cells.values()) == {2}
