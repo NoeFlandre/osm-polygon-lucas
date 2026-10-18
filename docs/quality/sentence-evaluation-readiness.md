@@ -173,9 +173,16 @@ Wiki row groups just to fill this gap.
   path.
 - **Sampling:** H3 resolution 3, seed 42, maximum 20 instances per cell applies
   only after all nine eligible yes/no pools are measured. No sampling has run.
-- **Compute:** no inference or Grid5000 allocation has started. Complete all
-  relevant data manifests and the live Grid5000 usage-policy check before any
-  inference request. No external outreach or allocation was made.
+- **Counts-only compute:** the bounded Description × LUCAS census completed as
+  Grid5000 job 3149628 on one CPU core, using code commit
+  `a03baebce2b6d53bb4ed439b5c0846da939ccc34`. It performed no sampling or
+  inference; its summary remains on Grid home. This run does not clear the
+  remaining cohort gates.
+- **Sampling and inference compute:** no inference allocation has started.
+  Complete all nine eligible `yes`/`no` counts and pinned manifests before
+  sampling or requesting compute for sampling/inference. Run the live
+  Grid5000 usage-policy check before each allocation. No external outreach was
+  made.
 
 Next, reproduce the source-pool census from exact-pinned local source and label
 snapshots without disturbing Atlas, complete the missing Wikidata/Wikipedia

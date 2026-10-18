@@ -746,3 +746,18 @@ def test_website_null_sentence_count_means_optional_field_is_absent(monkeypatch)
             "polygon_ids": ["poly-7"],
         }
     ]
+
+
+def test_direct_checkpoint_result_digest_rejects_tampering(tmp_path):
+    path = tmp_path / "checkpoint.json"
+    identity = {"source_id": "description", "region": "albania"}
+    result = {"eligible_polygon_count": 1}
+
+    direct_snapshot._write_checkpoint(path, "fixture/v1", identity, result)
+    checkpoint = json.loads(path.read_text(encoding="utf-8"))
+    assert "result_sha256" in checkpoint
+    checkpoint["result"]["eligible_polygon_count"] = 2
+    path.write_text(json.dumps(checkpoint), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checkpoint payload digest mismatch"):
+        direct_snapshot._read_checkpoint(path, "fixture/v1", identity)

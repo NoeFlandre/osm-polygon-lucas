@@ -176,9 +176,17 @@ but deferred. The `all` sample is drawn independently from reference labels;
 reference-code strata use only eligible LUCAS polygons. No binary LUCAS `yes` or
 `no` stratum is defined by this rule.
 
-Do not start inference or request Grid5000 compute until all nine eligible
-`yes`/`no` counts, pinned manifests, and policy preflight are complete. Run the
-Grid5000 policy check on a frontend before any allocation request. The prior
+A bounded CPU counts-only census may run before all nine eligible pools are
+measured when the task explicitly authorizes it, its inputs and code are pinned,
+and live policy, duplicate-job, capacity, and storage checks pass before the
+allocation. It must not sample or run inference. Job 3149628 completed the
+Description × LUCAS counts-only run on one CPU core at code commit
+`a03baebce2b6d53bb4ed439b5c0846da939ccc34`; its summary remains on Grid home.
+This single-source run does not clear the nine-cohort gate.
+
+Do not start sampling or inference, or request compute for either, until all
+nine eligible `yes`/`no` counts and pinned manifests are complete. Run the live
+Grid5000 policy check on a frontend before every allocation request. The prior
 Wiki-only throughput measurement is a planning estimate, not evidence for
-these cohorts. No compute allocation or external outreach is authorized by
+these cohorts. No inference allocation or external outreach is authorized by
 this plan.

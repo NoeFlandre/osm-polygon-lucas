@@ -79,6 +79,13 @@ def _checkpoint_digest(identity: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _payload_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _checkpoint_path(
     root: Path | None,
     stage: str,
@@ -134,6 +141,8 @@ def _read_checkpoint(
     if path is None or not path.exists():
         return None
     checkpoint = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"invalid checkpoint at {path}")
     if checkpoint.get("checkpoint_schema") != schema:
         raise ValueError(f"unsupported checkpoint schema at {path}")
     if checkpoint.get("identity") != identity:
@@ -141,6 +150,8 @@ def _read_checkpoint(
     result = checkpoint.get("result")
     if not isinstance(result, dict):
         raise ValueError(f"checkpoint result is invalid at {path}")
+    if checkpoint.get("result_sha256") != _payload_sha256(result):
+        raise ValueError(f"checkpoint payload digest mismatch at {path}")
     return result
 
 
@@ -156,6 +167,7 @@ def _write_checkpoint(
     checkpoint = {
         "checkpoint_schema": schema,
         "identity": identity,
+        "result_sha256": _payload_sha256(result),
         "result": result,
     }
     contents = json.dumps(checkpoint, ensure_ascii=False, sort_keys=True) + "\n"
