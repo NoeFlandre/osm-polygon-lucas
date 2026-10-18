@@ -37,6 +37,7 @@ dev = [
 ]
 docs = ["mkdocs==1.6.1"]
 census = [
+    "h3==4.5.0",
     "pyarrow==25.0.1",
     "pyproj==3.7.1; python_full_version < '3.12'",
     "pyproj==3.8.0; python_full_version >= '3.12'",

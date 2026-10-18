@@ -304,7 +304,7 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
         "checkpointing",
         "sampling_complete_for_selected_scope",
     }
-    assert report["report_schema"] == "lucas-point-source-census/v1"
+    assert report["report_schema"] == "lucas-point-source-census/v2"
     assert report["source_name"] == source_name
     assert report["source_id"] == source["source_id"]
     assert report["source_display_label"] == source.get("display_label", source_name)
@@ -334,7 +334,8 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
     assert set(report["method"]["sampling"]) == {
         "target_per_label",
         "seed",
-        "cell_size_metres",
+        "h3_version",
+        "h3_resolution",
         "max_per_cell",
         "anchor_rule",
     }
@@ -344,7 +345,8 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
     assert report["method"]["sampling"] == {
         "target_per_label": 2,
         "seed": 42,
-        "cell_size_metres": 50_000,
+        "h3_version": "4.5.0",
+        "h3_resolution": 3,
         "max_per_cell": 20,
         "anchor_rule": "lexically smallest point-eligible linked polygon ID",
     }
@@ -482,7 +484,8 @@ def _assert_report_schema(report: dict, source: dict, source_name: str) -> None:
             "source",
             "seed",
             "target_per_label",
-            "cell_size_metres",
+            "h3_resolution",
+            "h3_version",
             "max_per_cell",
             "eligible_by_label",
             "selected_by_label",
@@ -1022,7 +1025,8 @@ def test_point_source_checkpoints_resume_without_changing_selected_manifest(
         assert identity["sampling"] == {
             "target_per_label": 500,
             "seed": 42,
-            "cell_size_metres": 50_000,
+            "h3_version": "4.5.0",
+            "h3_resolution": 3,
             "max_per_cell": 20,
         }
     assert set(point_checkpoint["identity"]) == base_identity_keys | {
@@ -1160,7 +1164,7 @@ def test_candidate_stage_accumulates_counts_and_forwards_sampling_options(
         options=SimpleNamespace(
             target_per_label=3,
             seed=17,
-            cell_size_metres=12_345.0,
+            h3_resolution=7,
             max_per_cell=4,
         ),
         polygon_inputs=SimpleNamespace(fingerprints=[{"path": "geometry.parquet"}]),
@@ -1204,7 +1208,7 @@ def test_candidate_stage_accumulates_counts_and_forwards_sampling_options(
     assert all(
         call["seed"] == 17
         and call["target_per_label"] == 3
-        and call["cell_size_metres"] == 12_345.0
+        and call["h3_resolution"] == 7
         and call["max_per_cell"] == 4
         for call in sample_calls
     )
@@ -1846,13 +1850,14 @@ def test_sample_cohort_uses_wiki_link_union_and_sampling_options():
         point_index=_PointIndex({"osm:way/1": (12.5, 45.5), "osm:way/2": (14.5, 45.5)}),
         target_per_label=1,
         seed=7,
-        cell_size_metres=12_345.0,
+        h3_resolution=7,
         max_per_cell=4,
     )
 
     assert cohort["repeated_partition_sentence_rows_coalesced"] == 1
     assert cohort["sample"]["seed"] == 7
-    assert cohort["sample"]["cell_size_metres"] == 12_345.0
+    assert cohort["sample"]["h3_resolution"] == 7
+    assert cohort["sample"]["h3_version"] == "4.5.0"
     assert cohort["sample"]["max_per_cell"] == 4
     assert cohort["sample"]["multi_polygon_sentences_anchored"] == 1
     assert cohort["selected"][0]["anchor_polygon_id"] == "osm:way/1"
@@ -1899,7 +1904,9 @@ def test_sampling_options_are_validated_before_gpkg_or_config_reads(
         tmp_path / "labels", source["label_repository"], source["label_revision"]
     )
 
-    with pytest.raises(ValueError, match="cell_size_metres must be a positive"):
+    with pytest.raises(
+        ValueError, match="h3_resolution must be an integer from 0 through 15"
+    ):
         run_point_source_census(
             input_root,
             label_root,
@@ -1908,7 +1915,7 @@ def test_sampling_options_are_validated_before_gpkg_or_config_reads(
             tmp_path / "missing-lucas-config.json",
             "Description",
             regions=[REGION],
-            cell_size_metres=0,
+            h3_resolution=16,
             checkpoint_dir=tmp_path / "checkpoints",
         )
 
@@ -2042,8 +2049,8 @@ def test_cli_runs_explicit_snapshots_and_writes_a_new_report(
             "3",
             "--seed",
             "7",
-            "--cell-size-metres",
-            "20000",
+            "--h3-resolution",
+            "4",
             "--max-per-cell",
             "4",
             "--checkpoint-dir",
@@ -2067,7 +2074,7 @@ def test_cli_runs_explicit_snapshots_and_writes_a_new_report(
         "taxonomy_level": "detailed",
         "target_per_label": 3,
         "seed": 7,
-        "cell_size_metres": 20_000.0,
+        "h3_resolution": 4,
         "max_per_cell": 4,
         "checkpoint_dir": checkpoint_dir,
     }
@@ -2115,7 +2122,7 @@ def test_cli_parser_preserves_required_options_and_sampling_defaults(
     assert parsed.taxonomy_level == "main_category"
     assert parsed.target_per_label == 500
     assert parsed.seed == 42
-    assert parsed.cell_size_metres == 50_000
+    assert parsed.h3_resolution == 3
     assert parsed.max_per_cell == 20
     assert parsed.checkpoint_dir == tmp_path / "checkpoints"
     assert parsed.output == tmp_path / "report.json"
@@ -2430,8 +2437,8 @@ def test_all_source_cli_dispatches_and_writes_report(
             "3",
             "--seed",
             "7",
-            "--cell-size-metres",
-            "12345",
+            "--h3-resolution",
+            "7",
             "--max-per-cell",
             "4",
             "--checkpoint-dir",
@@ -2452,7 +2459,7 @@ def test_all_source_cli_dispatches_and_writes_report(
         "taxonomy_level": "detailed",
         "target_per_label": 3,
         "seed": 7,
-        "cell_size_metres": 12_345.0,
+        "h3_resolution": 7,
         "max_per_cell": 4,
         "checkpoint_dir": checkpoint_dir,
     }
@@ -2517,7 +2524,7 @@ def test_all_source_runner_uses_each_configured_pin_and_combines_scope(
         "taxonomy_level": "main_category",
         "target_per_label": 500,
         "seed": 42,
-        "cell_size_metres": 50_000,
+        "h3_resolution": 3,
         "max_per_cell": 20,
         "checkpoint_dir": checkpoint_dir,
     }
@@ -2528,7 +2535,7 @@ def test_all_source_runner_uses_each_configured_pin_and_combines_scope(
     )
     assert report["scope_complete"] is scope_complete
     assert set(report["source_runs"]) == {"SourceA", "SourceB"}
-    assert report["report_schema"] == "lucas-point-source-census/v1"
+    assert report["report_schema"] == "lucas-point-source-census/v2"
 
     calls.clear()
     custom_options = {
@@ -2536,7 +2543,7 @@ def test_all_source_runner_uses_each_configured_pin_and_combines_scope(
         "taxonomy_level": "detailed",
         "target_per_label": 3,
         "seed": 7,
-        "cell_size_metres": 12_345.0,
+        "h3_resolution": 7,
         "max_per_cell": 4,
         "checkpoint_dir": checkpoint_dir,
     }

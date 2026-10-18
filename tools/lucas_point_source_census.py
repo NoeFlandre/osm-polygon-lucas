@@ -68,10 +68,11 @@ from tools.lucas_point_census_domain import (
     point_result as _point_result,
 )
 from tools.lucas_point_sampling import (
+    H3_VERSION,
     _validate_sampling_options,
 )
 
-_POINT_SCHEMA = "lucas-point-source-census/v1"
+_POINT_SCHEMA = "lucas-point-source-census/v2"
 _POINT_CHECKPOINT_SCHEMA = "lucas-point-census-checkpoint/v1"
 _CANDIDATE_CHECKPOINT_SCHEMA = "lucas-point-candidate-checkpoint/v1"
 _LABEL_STATUSES = {"yes", "no", "skipped", "failed"}
@@ -96,7 +97,7 @@ class _RunOptions:
     taxonomy_level: str
     target_per_label: int
     seed: int
-    cell_size_metres: float
+    h3_resolution: int
     max_per_cell: int
 
 
@@ -639,7 +640,7 @@ def run_point_source_census(
     taxonomy_level: str = "main_category",
     target_per_label: int = 500,
     seed: int = 42,
-    cell_size_metres: float = 50_000,
+    h3_resolution: int = 3,
     max_per_cell: int = 20,
     checkpoint_dir: Path,
 ) -> dict[str, Any]:
@@ -658,7 +659,7 @@ def run_point_source_census(
         taxonomy_level,
         target_per_label,
         seed,
-        cell_size_metres,
+        h3_resolution,
         max_per_cell,
     )
     context = _prepare_run_context(
@@ -712,14 +713,14 @@ def _validated_run_options(
     taxonomy_level: str,
     target_per_label: int,
     seed: int,
-    cell_size_metres: float,
+    h3_resolution: int,
     max_per_cell: int,
 ) -> _RunOptions:
     _validate_target_and_seed(target_per_label, seed)
-    _validate_stream_sampling(scope, target_per_label, cell_size_metres, max_per_cell)
+    _validate_stream_sampling(scope, target_per_label, h3_resolution, max_per_cell)
     _taxonomy_level(taxonomy_level)
     return _RunOptions(
-        taxonomy_level, target_per_label, seed, cell_size_metres, max_per_cell
+        taxonomy_level, target_per_label, seed, h3_resolution, max_per_cell
     )
 
 
@@ -745,14 +746,14 @@ def _validate_seed(seed: int) -> None:
 def _validate_stream_sampling(
     scope: _SourceScope,
     target_per_label: int,
-    cell_size_metres: float,
+    h3_resolution: int,
     max_per_cell: int,
 ) -> None:
     for stream in scope.streams:
         _validate_sampling_options(
             f"{scope.source['source_id']}/{stream['name']}",
             target_per_label,
-            cell_size_metres,
+            h3_resolution,
             max_per_cell,
         )
 
@@ -852,7 +853,8 @@ def _base_checkpoint_identity(
         "sampling": {
             "target_per_label": options.target_per_label,
             "seed": options.seed,
-            "cell_size_metres": options.cell_size_metres,
+            "h3_version": H3_VERSION,
+            "h3_resolution": options.h3_resolution,
             "max_per_cell": options.max_per_cell,
         },
     }
@@ -928,7 +930,7 @@ def _run_candidate_stage(
             point_index=point_stage.index,
             target_per_label=context.options.target_per_label,
             seed=context.options.seed,
-            cell_size_metres=context.options.cell_size_metres,
+            h3_resolution=context.options.h3_resolution,
             max_per_cell=context.options.max_per_cell,
         )
         receipts["partitions"].update(partitions.receipts)
@@ -1107,7 +1109,8 @@ def _assemble_report(
             "sampling": {
                 "target_per_label": options.target_per_label,
                 "seed": options.seed,
-                "cell_size_metres": options.cell_size_metres,
+                "h3_version": H3_VERSION,
+                "h3_resolution": options.h3_resolution,
                 "max_per_cell": options.max_per_cell,
                 "anchor_rule": "lexically smallest point-eligible linked polygon ID",
             },
@@ -1167,7 +1170,7 @@ def run_all_point_source_censuses(
     taxonomy_level: str = "main_category",
     target_per_label: int = 500,
     seed: int = 42,
-    cell_size_metres: float = 50_000,
+    h3_resolution: int = 3,
     max_per_cell: int = 20,
     checkpoint_dir: Path,
 ) -> dict[str, Any]:
@@ -1192,7 +1195,7 @@ def run_all_point_source_censuses(
             taxonomy_level=taxonomy_level,
             target_per_label=target_per_label,
             seed=seed,
-            cell_size_metres=cell_size_metres,
+            h3_resolution=h3_resolution,
             max_per_cell=max_per_cell,
             checkpoint_dir=checkpoint_dir,
         )
@@ -1241,7 +1244,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--taxonomy-level", default="main_category")
     parser.add_argument("--target-per-label", type=int, default=500)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--cell-size-metres", type=float, default=50_000)
+    parser.add_argument("--h3-resolution", type=int, default=3)
     parser.add_argument("--max-per-cell", type=int, default=20)
     parser.add_argument("--checkpoint-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -1338,7 +1341,7 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             taxonomy_level=args.taxonomy_level,
             target_per_label=args.target_per_label,
             seed=args.seed,
-            cell_size_metres=args.cell_size_metres,
+            h3_resolution=args.h3_resolution,
             max_per_cell=args.max_per_cell,
             checkpoint_dir=args.checkpoint_dir,
         )
@@ -1356,7 +1359,7 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             taxonomy_level=args.taxonomy_level,
             target_per_label=args.target_per_label,
             seed=args.seed,
-            cell_size_metres=args.cell_size_metres,
+            h3_resolution=args.h3_resolution,
             max_per_cell=args.max_per_cell,
             checkpoint_dir=args.checkpoint_dir,
         )

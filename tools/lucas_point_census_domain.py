@@ -544,7 +544,8 @@ def sample_report(sample: PointSentenceSample) -> dict[str, Any]:
         "source": sample.source,
         "seed": sample.seed,
         "target_per_label": sample.target_per_label,
-        "cell_size_metres": sample.cell_size_metres,
+        "h3_resolution": sample.h3_resolution,
+        "h3_version": sample.h3_version,
         "max_per_cell": sample.max_per_cell,
         "eligible_by_label": dict(sample.eligible_by_label),
         "selected_by_label": dict(sample.selected_by_label),
@@ -565,7 +566,7 @@ def sample_report(sample: PointSentenceSample) -> dict[str, Any]:
                 "sentence_id": entry.sentence_id,
                 "relevance": entry.relevance,
                 "anchor_polygon_id": entry.anchor_polygon_id,
-                "cell": list(entry.cell),
+                "cell": entry.cell,
             }
             for entry in sample.selected
         ],
@@ -601,7 +602,7 @@ def sample_cohort(
     point_index: PointIndex,
     target_per_label: int,
     seed: int,
-    cell_size_metres: float,
+    h3_resolution: int,
     max_per_cell: int,
 ) -> dict[str, Any]:
     candidates, metadata, repeated_rows = coalesce_partition_candidates(
@@ -613,7 +614,7 @@ def sample_cohort(
         source=f"{source['source_id']}/{stream_name}",
         target_per_label=target_per_label,
         seed=seed,
-        cell_size_metres=cell_size_metres,
+        h3_resolution=h3_resolution,
         max_per_cell=max_per_cell,
     )
     report = sample_report(sample)
