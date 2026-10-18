@@ -1,4 +1,4 @@
-"""Read-only LUCAS census adapter for locally cached pinned source snapshots."""
+"""Read-only LUCAS census adapter for local HF-cache-shaped source directories."""
 
 from __future__ import annotations
 
@@ -31,8 +31,9 @@ def _validate_snapshot_root(path: Path, repository: str, revision: str) -> Path:
         or root.parent.name != "snapshots"
         or root.parent.parent.name != cache_name
     ):
+        expected = f"{cache_name}/snapshots/{revision}"
         raise ValueError(
-            f"snapshot must be {cache_name}/snapshots/{revision} for the pinned repo"
+            f"source path must match {expected} for the configured repo and revision"
         )
     return root
 
@@ -60,7 +61,7 @@ def _snapshot_file(root: Path, template: str, *, region: str, stream: str) -> Pa
         raise ValueError("direct-source path template must stay inside its snapshot")
     path = root.joinpath(*relative.parts)
     if not path.is_file():
-        raise FileNotFoundError(f"pinned source snapshot file is missing: {relative}")
+        raise FileNotFoundError(f"configured source file is missing: {relative}")
     return path
 
 
@@ -119,7 +120,7 @@ def _require_input_file_signature(
     path: Path, expected: tuple[int, int, int, int, int]
 ) -> None:
     if not path.is_file() or census._asset_signature(path) != expected:
-        raise ValueError(f"pinned snapshot file changed during the census: {path}")
+        raise ValueError(f"configured source file changed during the census: {path}")
 
 
 def _complete_source_scope(
@@ -524,7 +525,7 @@ def _direct_geometry_checkpoint(
     )
     if not polygon_path.is_file():
         raise FileNotFoundError(
-            f"pinned source snapshot file is missing: {polygon_relative}"
+            f"configured source file is missing: {polygon_relative}"
         )
     polygon_fingerprint, polygon_signature = _input_file_fingerprint(
         polygon_path, include_content_hash=checkpoint_dir is not None
@@ -947,7 +948,7 @@ def run_direct_source_pool_census(
     stream_names: list[str] | None = None,
     checkpoint_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Run a geometry-first census from configured-revision cache paths offline."""
+    """Run a geometry-first census offline from configured-revision-shaped paths."""
     config = census._load_config(config_path)
     source = census._source_config(config, source_name)
     input_root = _validate_snapshot_root(
@@ -1136,7 +1137,7 @@ def run_direct_source_pool_census(
                 "repository": source["label_repository"],
                 "revision": source["label_revision"],
             },
-            "network_access": "none; the adapter reads only existing local snapshots",
+            "network_access": "none; the adapter reads only supplied local directories",
         },
         "checkpointing": {
             "enabled": checkpoint_dir is not None,

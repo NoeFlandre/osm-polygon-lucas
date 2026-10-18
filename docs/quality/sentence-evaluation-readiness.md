@@ -76,9 +76,9 @@ The Europe receipt is git-ignored at
 reconcile, but the checkpoint driver used for that run is also git-ignored.
 The tracked source-pool census now supports the three source schemas across
 the configured region scope and can read either Atlas outputs or local
-directories shaped like HF cache paths, with repository and revision components
-matching the configuration. It does not verify HF cache metadata or authenticate
-file bytes against a trusted Hub commit manifest. The direct adapter has
+directories whose HF-cache-shaped paths match the configured repository and
+revision. This path check does not verify HF cache metadata or authenticate file
+bytes against a trusted Hub commit manifest. The direct adapter has
 synthetic tests, but no complete tracked spatial run has reproduced the receipt.
 Treat
 the Europe aggregate as recorded evidence, not an independently reproducible

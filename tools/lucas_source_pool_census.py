@@ -951,7 +951,7 @@ def main() -> None:
                 parser.error("--checkpoint-dir requires direct source snapshots")
             if args.atlas_root is None:
                 parser.error(
-                    "census mode requires --atlas-root or both pinned source snapshots"
+                    "census mode requires --atlas-root or both configured source directories"
                 )
             result = run_source_pool_census(
                 args.atlas_root,

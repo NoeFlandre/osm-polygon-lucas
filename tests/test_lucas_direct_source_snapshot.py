@@ -178,7 +178,7 @@ def test_input_fingerprint_rejects_change_while_hashing(tmp_path, monkeypatch):
     monkeypatch.setattr(census, "_file_sha256", hash_then_change)
     monkeypatch.setattr(census, "_asset_signature", changed_signature)
 
-    with pytest.raises(ValueError, match="pinned snapshot file changed"):
+    with pytest.raises(ValueError, match="configured source file changed"):
         direct_snapshot._input_file_fingerprint(path, include_content_hash=True)
 
 

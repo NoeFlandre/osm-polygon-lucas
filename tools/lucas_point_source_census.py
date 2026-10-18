@@ -1,4 +1,4 @@
-"""Run a resumable point-based census over local pinned source snapshots."""
+"""Run a resumable point-based census over local source-pool inputs."""
 
 from __future__ import annotations
 
