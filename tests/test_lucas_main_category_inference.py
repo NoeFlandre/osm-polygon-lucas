@@ -455,6 +455,17 @@ def test_checkpoint_binds_runtime_and_rejects_source_text(tmp_path):
         )
 
 
+def test_grid5000_launcher_installs_locked_dependencies_without_project_build():
+    launcher = LAUNCHER_PATH.read_text(encoding="utf-8")
+    sync_start = launcher.index('"$UV_BIN" sync')
+    sync_end = launcher.index("\nPYTHON=", sync_start)
+    sync = launcher[sync_start:sync_end]
+    assert "--frozen" in sync
+    assert "--extra inference" in sync
+    assert "--no-dev" in sync
+    assert "--no-install-project" in sync
+
+
 def test_grid5000_launcher_has_valid_shell_syntax():
     result = subprocess.run(
         ["bash", "-n", str(LAUNCHER_PATH)], capture_output=True, text=True

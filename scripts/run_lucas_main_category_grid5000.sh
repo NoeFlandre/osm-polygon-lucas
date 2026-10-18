@@ -111,11 +111,13 @@ if [[ "$LUCAS_VALIDATE_SOURCES_ONLY" == "1" ]]; then
   exit 0
 fi
 
+# Install the pinned dependencies without building the omitted project wheel.
 "$UV_BIN" sync \
   --project "$RUNTIME_PROJECT_ROOT" \
   --frozen \
   --extra inference \
   --no-dev \
+  --no-install-project \
   --python 3.12.13
 PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python"
 "$UV_BIN" pip install --python "$PYTHON" --no-deps pyarrow==25.0.1
