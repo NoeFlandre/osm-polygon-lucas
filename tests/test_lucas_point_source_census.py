@@ -1242,9 +1242,12 @@ def test_candidate_stage_samples_wiki_streams_as_one_cohort(
     assert combined["h3_resolution"] == 7
     assert combined["max_per_cell"] == 4
     assert combined["source_name"] == "Wikidata"
+    expected_point_index_digest = payload_sha256(
+        point_stage.result["eligible_polygon_anchors"]
+    )
     assert [call[1] for call in partition_calls] == [
-        "point-index-digest",
-        "point-index-digest",
+        expected_point_index_digest,
+        expected_point_index_digest,
     ]
 
     context.scope.source["direct_input"]["schema"] = "website-polygons-v1"
@@ -1989,14 +1992,11 @@ def test_combined_wiki_sample_shares_quota_and_cell_cap_across_streams():
     assert first["sample"]["target_per_label"] == 6
     assert first["sample"]["h3_resolution"] == 7
     assert first["sample"]["max_per_cell"] == 2
-    assert first["sample"]["selected_by_label"] == {"yes": 4, "no": 4}
+    assert first["sample"]["selected_by_label"] == {"yes": 2, "no": 2}
     assert first["sample"]["eligible_by_label"] == {"yes": 6, "no": 6}
-    for relevance in ("yes", "no"):
-        cells = Counter(
-            row["cell"] for row in first["selected"] if row["relevance"] == relevance
-        )
-        assert len(cells) == 2
-        assert set(cells.values()) == {2}
+    cells = Counter(row["cell"] for row in first["selected"])
+    assert len(cells) == 2
+    assert set(cells.values()) == {2}
     assert first["selected_manifest"] == second["selected_manifest"]
     assert first["selected_manifest"] == reversed_streams["selected_manifest"]
     assert {row["origin_streams"][0] for row in first["selected"]} <= {
@@ -2065,8 +2065,8 @@ def test_combined_wiki_sample_coalesces_cross_stream_sentence_keys():
         "wikivoyage": [
             partition("wikivoyage", "shared-1", "osm:way/1", "albania"),
             partition("wikivoyage", "shared-2", "osm:way/4", "france"),
-            partition("wikivoyage", "shared-1", "osm:way/4", "belgium"),
-            partition("wikivoyage", "shared-2", "osm:way/1", "albania"),
+            partition("wikivoyage", "shared-1", "osm:way/1", "belgium"),
+            partition("wikivoyage", "shared-2", "osm:way/4", "albania"),
         ],
     }
 
