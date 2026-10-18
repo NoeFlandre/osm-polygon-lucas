@@ -187,10 +187,9 @@ Wiki row groups just to fill this gap.
   observed balanced target of 314 per label; Website and combined Wiki target
   500 per label. The Wiki streams must be deduplicated by `sentence_id` and
   sampled under one shared quota and cell cap. Report any observed shortfall.
-- **Counts-only compute:** the bounded Description × LUCAS census completed as
-  Grid5000 job 3149628 on one CPU core, using code commit
-  `a03baebce2b6d53bb4ed439b5c0846da939ccc34`. It performed no sampling or
-  inference; its summary remains on Grid home. This run does not clear the
+- **Counts-only compute:** no census output is included with this PR. Any future
+  run requires explicit authorization, pinned inputs and code, and live policy,
+  capacity, and storage checks. A counts-only result would not clear the
   remaining cohort gates.
 - **Inference readiness:** the census checkout does not contain the pinned
   classifier inference runner or its output parser. The source-label generation

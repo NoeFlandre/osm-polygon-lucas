@@ -188,10 +188,8 @@ reference-code strata use only eligible LUCAS polygons. No binary LUCAS `yes` or
 A bounded CPU counts-only census may run before all nine eligible pools are
 measured when the task explicitly authorizes it, its inputs and code are pinned,
 and live policy, duplicate-job, capacity, and storage checks pass before the
-allocation. It must not sample or run inference. Job 3149628 completed the
-Description × LUCAS counts-only run on one CPU core at code commit
-`a03baebce2b6d53bb4ed439b5c0846da939ccc34`; its summary remains on Grid home.
-This single-source run does not clear the nine-cohort gate.
+allocation. It must not sample or run inference. A single-source run does not
+clear the nine-cohort gate.
 
 This nine-cohort gate applies to the sentence cohorts in this document. The
 separate LUCAS point cohorts have their own limited authorization and gates in
