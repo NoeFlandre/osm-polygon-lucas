@@ -8,9 +8,17 @@ if [[ -z "${OAR_JOB_ID:-}" ]]; then
 fi
 
 : "${LUCAS_CODE_ROOT:?set LUCAS_CODE_ROOT to the pinned checkout}"
-: "${LUCAS_RUNTIME_PROJECT_ROOT:?set LUCAS_RUNTIME_PROJECT_ROOT to the QA-pinned runtime project}"
 CODE_ROOT="$(cd "$LUCAS_CODE_ROOT" && pwd -P)"
-RUNTIME_PROJECT_ROOT="$(cd "$LUCAS_RUNTIME_PROJECT_ROOT" && pwd -P)"
+LUCAS_VALIDATE_SOURCES_ONLY="${LUCAS_VALIDATE_SOURCES_ONLY:-0}"
+if [[ "$LUCAS_VALIDATE_SOURCES_ONLY" != "0" && "$LUCAS_VALIDATE_SOURCES_ONLY" != "1" ]]; then
+  echo "LUCAS_VALIDATE_SOURCES_ONLY must be 0 or 1." >&2
+  exit 2
+fi
+RUNTIME_PROJECT_ROOT=""
+if [[ "$LUCAS_VALIDATE_SOURCES_ONLY" == "0" ]]; then
+  : "${LUCAS_RUNTIME_PROJECT_ROOT:?set LUCAS_RUNTIME_PROJECT_ROOT to the QA-pinned runtime project}"
+  RUNTIME_PROJECT_ROOT="$(cd "$LUCAS_RUNTIME_PROJECT_ROOT" && pwd -P)"
+fi
 RUN_ROOT="${LUCAS_RUN_ROOT:-$HOME/lucas-main-category-20261018-lfm2.5-2.6b-v1-constrained-choice}"
 MANIFEST_ROOT="$RUN_ROOT/manifests"
 CONFIG_PATH="$CODE_ROOT/config/lucas-source-pools.json"
@@ -22,34 +30,45 @@ UV_BIN="$RUNTIME_ROOT/bin/uv"
 UV_VERSION="0.11.16"
 RUNTIME_PYPROJECT_SHA256="88cf51fb7348346215aa892140babdb2dc4cc60a5e2af1cd71a829509cd8e632"
 RUNTIME_UV_LOCK_SHA256="96fa2cb67852952919e0ed76c6e4c9a9478d419cca373b7ed33aea8dc6f1dd67"
-EXPECTED_RUNNER_SHA256="6dd779a139b913a7cba0ea3b9a29525a651e5175530505d49ced011c0d490861"
+EXPECTED_RUNNER_SHA256="d284534975e7132b13e9a2c5b6ac8fc89194f264b9d6d4f87b3a4214b4790a45"
 
 for required_file in \
   "$CONFIG_PATH" \
   "$RUNNER_PATH" \
   "$MANIFEST_ROOT/description.json" \
   "$MANIFEST_ROOT/website.json" \
-  "$MANIFEST_ROOT/combined-wiki.json" \
-  "$RUNTIME_PROJECT_ROOT/pyproject.toml" \
-  "$RUNTIME_PROJECT_ROOT/uv.lock"; do
+  "$MANIFEST_ROOT/combined-wiki.json"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required pinned input is missing: $required_file" >&2
     exit 2
   fi
 done
 
+if [[ "$LUCAS_VALIDATE_SOURCES_ONLY" == "0" ]]; then
+  for required_file in \
+    "$RUNTIME_PROJECT_ROOT/pyproject.toml" \
+    "$RUNTIME_PROJECT_ROOT/uv.lock"; do
+    if [[ ! -f "$required_file" ]]; then
+      echo "Required pinned input is missing: $required_file" >&2
+      exit 2
+    fi
+  done
+fi
+
 if [[ "$(sha256sum "$RUNNER_PATH" | cut -d ' ' -f 1)" != "$EXPECTED_RUNNER_SHA256" ]]; then
   echo "Inference runner does not match its QA pin." >&2
   exit 2
 fi
 
-if [[ "$(sha256sum "$RUNTIME_PROJECT_ROOT/pyproject.toml" | cut -d ' ' -f 1)" != "$RUNTIME_PYPROJECT_SHA256" ]]; then
-  echo "Inference runtime pyproject does not match its QA pin." >&2
-  exit 2
-fi
-if [[ "$(sha256sum "$RUNTIME_PROJECT_ROOT/uv.lock" | cut -d ' ' -f 1)" != "$RUNTIME_UV_LOCK_SHA256" ]]; then
-  echo "Inference runtime lock does not match its QA pin." >&2
-  exit 2
+if [[ "$LUCAS_VALIDATE_SOURCES_ONLY" == "0" ]]; then
+  if [[ "$(sha256sum "$RUNTIME_PROJECT_ROOT/pyproject.toml" | cut -d ' ' -f 1)" != "$RUNTIME_PYPROJECT_SHA256" ]]; then
+    echo "Inference runtime pyproject does not match its QA pin." >&2
+    exit 2
+  fi
+  if [[ "$(sha256sum "$RUNTIME_PROJECT_ROOT/uv.lock" | cut -d ' ' -f 1)" != "$RUNTIME_UV_LOCK_SHA256" ]]; then
+    echo "Inference runtime lock does not match its QA pin." >&2
+    exit 2
+  fi
 fi
 
 mkdir -p "$RUNTIME_ROOT/bin" "$RUNTIME_ROOT/python" "$RUNTIME_ROOT/uv-cache"
@@ -75,6 +94,22 @@ export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 export TOKENIZERS_PARALLELISM=false
 export USE_TF=0
 mkdir -p "$HF_HOME"
+
+if [[ "$LUCAS_VALIDATE_SOURCES_ONLY" == "1" ]]; then
+  VALIDATION_VENV="$RUNTIME_ROOT/source-validation-venv"
+  "$UV_BIN" venv --python 3.12.13 "$VALIDATION_VENV"
+  PYTHON="$VALIDATION_VENV/bin/python"
+  "$UV_BIN" pip install --python "$PYTHON" \
+    pyarrow==25.0.1 \
+    huggingface-hub==1.31.0
+  "$PYTHON" "$RUNNER_PATH" \
+    --manifest-root "$MANIFEST_ROOT" \
+    --config "$CONFIG_PATH" \
+    --output-root "$RUN_ROOT/output" \
+    --scratch-root "$SCRATCH_ROOT/source-and-model" \
+    --validate-sources-only
+  exit 0
+fi
 
 "$UV_BIN" sync \
   --project "$RUNTIME_PROJECT_ROOT" \

@@ -220,8 +220,17 @@ def test_website_and_wiki_resolvers_handle_synthetic_pinned_keys(monkeypatch, tm
         pa.table(
             {
                 "polygon_id": ["synthetic-polygon"],
-                "website": [["synthetic website sentence"]],
-                "contact_website": [["synthetic contact sentence"]],
+                "website": ["unsplit raw website value"],
+                "website_sentences": [
+                    [
+                        "synthetic website sentence zero",
+                        "synthetic website sentence one",
+                    ]
+                ],
+                "website_sentence_count": [2],
+                "contact_website": ["unsplit raw contact value"],
+                "contact_website_sentences": [["synthetic contact sentence"]],
+                "contact_website_sentence_count": [1],
             }
         ),
         website_path,
@@ -245,23 +254,35 @@ def test_website_and_wiki_resolvers_handle_synthetic_pinned_keys(monkeypatch, tm
             else (wiki_path, "wikipedia/sentences/AT-latest.parquet")
         ),
     )
-    website_entry = {
-        "sentence_id": "synthetic-website-id",
-        "origin_region": "AT",
-        "natural_key": {
-            "polygon_id": "synthetic-polygon",
-            "field": "contact_website",
-            "sentence_index": 0,
+    website_entries = [
+        {
+            "sentence_id": "synthetic-website-id",
+            "origin_region": "AT",
+            "natural_key": {
+                "polygon_id": "synthetic-polygon",
+                "field": "website",
+                "sentence_index": 1,
+            },
         },
-    }
+        {
+            "sentence_id": "synthetic-contact-website-id",
+            "origin_region": "AT",
+            "natural_key": {
+                "polygon_id": "synthetic-polygon",
+                "field": "contact_website",
+                "sentence_index": 0,
+            },
+        },
+    ]
     wiki_entry = {
         "sentence_id": "synthetic-wiki-record",
         "origin_region": "AT",
         "origin_streams": ["wikipedia"],
         "natural_key": {"sentence_id": "synthetic-wiki-id"},
     }
-    assert runner._resolve_website([website_entry], {}, tmp_path) == {
-        "synthetic-website-id": "synthetic contact sentence"
+    assert runner._resolve_website(website_entries, {}, tmp_path) == {
+        "synthetic-website-id": "synthetic website sentence one",
+        "synthetic-contact-website-id": "synthetic contact sentence",
     }
     assert runner._resolve_wiki([wiki_entry], {}, tmp_path) == {
         "synthetic-wiki-record": "synthetic wiki sentence"
@@ -482,6 +503,78 @@ def test_run_rejects_resolved_scratch_symlink_to_publish_directory(tmp_path):
         runner.run(args)
 
     assert list(publish_root.iterdir()) == []
+
+
+def test_run_rejects_hub_cache_symlink_to_publish_directory(tmp_path):
+    output_root = tmp_path / "output"
+    publish_root = output_root / "publish"
+    publish_root.mkdir(parents=True)
+    scratch_root = tmp_path / "scratch"
+    scratch_root.mkdir()
+    (scratch_root / "hf-hub-cache").symlink_to(publish_root, target_is_directory=True)
+    args = Namespace(
+        manifest_root=tmp_path / "manifests",
+        config=tmp_path / "config.json",
+        output_root=output_root,
+        scratch_root=scratch_root,
+        runtime_project=tmp_path / "runtime",
+        runtime_info=tmp_path / "missing-runtime-info.json",
+    )
+
+    with pytest.raises(
+        ValueError, match="Hugging Face source cache path.*publish directory"
+    ):
+        runner.run(args)
+
+    assert list(publish_root.iterdir()) == []
+
+
+def test_validate_sources_only_uses_all_cohorts_without_runtime_or_saved_text(
+    monkeypatch, tmp_path, capsys
+):
+    cohort_names = ("description", "website", "combined-wiki")
+    manifests = {
+        name: {
+            "entries": [{"sentence_id": f"{name}-id"}],
+            "sha256": f"{index:064x}",
+            "source": {
+                "input_revision": "1" * 40,
+                "label_revision": "2" * 40,
+            },
+        }
+        for index, name in enumerate(cohort_names, start=1)
+    }
+    resolved: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        runner,
+        "_load_manifests",
+        lambda _manifest_root, _config_path: (manifests, {}, "3" * 64),
+    )
+
+    def resolve(_cohort, cohort_data, _scratch, *, persist_resolved):
+        name = cohort_data["entries"][0]["sentence_id"].removesuffix("-id")
+        resolved.append((name, persist_resolved))
+        return [{"sentence": "synthetic private source text"}]
+
+    monkeypatch.setattr(runner, "_resolve_cohort", resolve)
+    output_root = tmp_path / "output"
+    scratch_root = tmp_path / "scratch"
+    args = Namespace(
+        manifest_root=tmp_path / "manifests",
+        config=tmp_path / "config.json",
+        output_root=output_root,
+        scratch_root=scratch_root,
+        validate_sources_only=True,
+    )
+
+    assert runner.run(args) == 0
+
+    assert resolved == [(name, False) for name in cohort_names]
+    assert not output_root.exists()
+    assert not (scratch_root / "resolved").exists()
+    output = capsys.readouterr().out
+    assert "source_join_validation_complete rows=3" in output
+    assert "synthetic private source text" not in output
 
 
 def test_grid5000_launcher_pins_the_inference_runner_hash():

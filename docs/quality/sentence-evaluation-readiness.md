@@ -202,12 +202,19 @@ Wiki row groups just to fill this gap.
   tests cover the parser, source adapters, malformed revision rejection,
   runtime contract, checkpoint privacy, and launcher syntax. They do not
   substitute for hosted CI or a completed inference run.
+- **Source-join preflight:** set `LUCAS_VALIDATE_SOURCES_ONLY=1` when running
+  `scripts/run_lucas_main_category_grid5000.sh` inside a CPU-only OAR allocation.
+  The mode validates all three pinned cohort manifests and resolves every
+  selected text join without loading the model or persisting resolved sentences.
+  It uses the pinned Website `website_sentences` and
+  `contact_website_sentences` arrays and checks their counts against the source
+  metadata before matching the zero-based sentence indices.
 - **Inference provenance:** the launcher requires the audited runtime project
   and lock hashes, validates Python/PyTorch/CUDA/Transformers/Hub/PyArrow pins
   and GPU capability, and writes job-specific runtime metadata. Downloaded
   source Parquet, resolved sentence text, and model cache stay in
-  allocation-local scratch. The runner resolves and rejects a source-text
-  output path inside the `output/publish` tree, including symlinked paths.
+  allocation-local scratch. The runner rejects resolved-text and Hub-cache
+  paths that overlap the `output/publish` tree, including symlinked paths.
   Checkpoints and publication artifacts omit source text and raw completions.
   No LUCAS inference or score publication has been
   performed by this change. Review train/evaluation overlap before interpreting

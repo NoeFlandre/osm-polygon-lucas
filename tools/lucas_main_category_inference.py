@@ -354,6 +354,12 @@ def _sentence_list(value: Any, *, key: str) -> list[str]:
     return output
 
 
+def _website_sentence_count(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("Website sentence count must be a non-negative integer")
+    return value
+
+
 def _put_resolved(found: dict[Any, str], key: Any, text: str) -> None:
     if not isinstance(text, str) or not text.strip():
         raise ValueError(
@@ -477,22 +483,49 @@ def _resolve_website(
     found: dict[tuple[str, str, int], str] = {}
     for region, keys in sorted(needed.items()):
         path, relative = _download_source_file(source, "website", region, scratch)
-        columns = ("polygon_id", "website", "contact_website")
+        columns = (
+            "polygon_id",
+            "website_sentences",
+            "website_sentence_count",
+            "contact_website_sentences",
+            "contact_website_sentence_count",
+        )
+        expected_polygon_ids = {polygon_id for polygon_id, _, _ in keys}
         for batch in _parquet_batches(path, columns):
-            for polygon_id, website, contact_website in zip(
+            for (
+                polygon_id,
+                website_sentences,
+                website_count,
+                contact_sentences,
+                contact_count,
+            ) in zip(
                 batch["polygon_id"],
-                batch["website"],
-                batch["contact_website"],
+                batch["website_sentences"],
+                batch["website_sentence_count"],
+                batch["contact_website_sentences"],
+                batch["contact_website_sentence_count"],
                 strict=True,
             ):
                 if polygon_id is None:
                     continue
-                for field, values in (
-                    ("website", website),
-                    ("contact_website", contact_website),
+                polygon_id = str(polygon_id)
+                if polygon_id not in expected_polygon_ids:
+                    continue
+                for field, raw_values, raw_count in (
+                    ("website", website_sentences, website_count),
+                    ("contact_website", contact_sentences, contact_count),
                 ):
-                    for index, text in enumerate(_sentence_list(values, key=relative)):
-                        key = (str(polygon_id), field, index)
+                    values = _sentence_list(raw_values, key=relative)
+                    count = (
+                        0 if raw_count is None else _website_sentence_count(raw_count)
+                    )
+                    if len(values) != count:
+                        raise ValueError(
+                            "Website sentence array length differs "
+                            "from its pinned count"
+                        )
+                    for index, text in enumerate(values):
+                        key = (polygon_id, field, index)
                         if key in keys:
                             _put_resolved(found, key, text)
     expected = set().union(*needed.values())
@@ -565,6 +598,8 @@ def _resolve_cohort(
     cohort: str,
     cohort_data: dict[str, Any],
     scratch: Path,
+    *,
+    persist_resolved: bool = True,
 ) -> list[dict[str, Any]]:
     entries = cohort_data["entries"]
     source = cohort_data["source"]
@@ -581,18 +616,22 @@ def _resolve_cohort(
     for entry in entries:
         text = text_by_id[entry["sentence_id"]]
         rows.append({"entry": entry, "sentence": text})
-    scratch_path = scratch / "resolved" / f"{cohort}.jsonl"
-    scratch_payload = "".join(
-        json.dumps(
-            {"sentence_id": row["entry"]["sentence_id"], "sentence": row["sentence"]},
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        + "\n"
-        for row in rows
-    ).encode("utf-8")
-    _write_immutable(scratch_path, scratch_payload)
-    os.chmod(scratch_path, 0o600)
+    if persist_resolved:
+        scratch_path = scratch / "resolved" / f"{cohort}.jsonl"
+        scratch_payload = "".join(
+            json.dumps(
+                {
+                    "sentence_id": row["entry"]["sentence_id"],
+                    "sentence": row["sentence"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n"
+            for row in rows
+        ).encode("utf-8")
+        _write_immutable(scratch_path, scratch_payload)
+        os.chmod(scratch_path, 0o600)
     return rows
 
 
@@ -1221,22 +1260,75 @@ def _ensure_publish_metadata(
     return config, prompt_sha256
 
 
+def _require_scratch_isolated_from_publish(
+    output_root: Path, scratch_root: Path
+) -> None:
+    publish_root = (output_root / "publish").resolve()
+    for scratch_name in ("resolved", "hf-hub-cache"):
+        scratch_path = (scratch_root / scratch_name).resolve()
+        if (
+            scratch_path == publish_root
+            or publish_root in scratch_path.parents
+            or scratch_path in publish_root.parents
+        ):
+            path_description = (
+                "resolved source-text path"
+                if scratch_name == "resolved"
+                else "Hugging Face source cache path"
+            )
+            raise ValueError(
+                f"{path_description} cannot overlap the output publish directory"
+            )
+
+
+def _validate_sources_only(
+    manifest_root: Path,
+    config_path: Path,
+    scratch_root: Path,
+) -> int:
+    manifests, _source_config, _config_sha256 = _load_manifests(
+        manifest_root, config_path
+    )
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    total_rows = 0
+    for cohort, data in manifests.items():
+        rows = _resolve_cohort(
+            cohort,
+            data,
+            scratch_root,
+            persist_resolved=False,
+        )
+        row_count = len(rows)
+        total_rows += row_count
+        print(
+            json.dumps(
+                {
+                    "event": "source_join_validated",
+                    "cohort": cohort,
+                    "rows": row_count,
+                    "manifest_sha256": data["sha256"],
+                    "input_revision": data["source"]["input_revision"],
+                    "label_revision": data["source"]["label_revision"],
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        del rows
+    print(f"source_join_validation_complete rows={total_rows}", flush=True)
+    return 0
+
+
 def run(args: argparse.Namespace) -> int:
     manifest_root = args.manifest_root.resolve()
     config_path = args.config.resolve()
     output_root = args.output_root.resolve()
     scratch_root = args.scratch_root.resolve()
+    _require_scratch_isolated_from_publish(output_root, scratch_root)
+    if getattr(args, "validate_sources_only", False):
+        return _validate_sources_only(manifest_root, config_path, scratch_root)
     runtime_project = args.runtime_project.resolve()
     runtime_info_path = args.runtime_info.resolve()
-    publish_root = (output_root / "publish").resolve()
-    resolved_scratch_root = (scratch_root / "resolved").resolve()
-    if (
-        resolved_scratch_root == publish_root
-        or publish_root in resolved_scratch_root.parents
-    ):
-        raise ValueError(
-            "resolved source-text path cannot overlap the output publish directory"
-        )
     runtime_info = _read_json(runtime_info_path)
     runtime_info_sha256 = _validate_runtime_info(runtime_info, runtime_project)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1375,9 +1467,15 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--scratch-root", type=Path, required=True)
-    parser.add_argument("--runtime-project", type=Path, required=True)
-    parser.add_argument("--runtime-info", type=Path, required=True)
-    return run(parser.parse_args())
+    parser.add_argument("--runtime-project", type=Path)
+    parser.add_argument("--runtime-info", type=Path)
+    parser.add_argument("--validate-sources-only", action="store_true")
+    args = parser.parse_args()
+    if not args.validate_sources_only and (
+        args.runtime_project is None or args.runtime_info is None
+    ):
+        parser.error("normal inference requires --runtime-project and --runtime-info")
+    return run(args)
 
 
 if __name__ == "__main__":
