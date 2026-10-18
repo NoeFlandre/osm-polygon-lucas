@@ -55,6 +55,9 @@ CODE_LABELS = {
 }
 PROTOCOL_VERSION = "thinking-close-canonical-choice-lucas-v1-4096"
 UV_VERSION = "0.11.16"
+SOURCE_CONFIG_SHA256 = (
+    "b4dd91ec0d093df23382d448faa0fa34417aa1607fd3a44fe8f20b204e534641"
+)
 
 PROMPT_TEMPLATE = """Classify the land cover described by the sentence using the
 LUCAS 2022 C3 land-cover classification at the main-category level.
@@ -254,6 +257,9 @@ def _load_runtime_hashes(output_root: Path, runtime_project: Path) -> set[str]:
 def _load_manifests(
     manifest_root: Path, config_path: Path
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any], str]:
+    config_sha256 = sha256_file(config_path)
+    if config_sha256 != SOURCE_CONFIG_SHA256:
+        raise ValueError("source-pool configuration hash differs from its pin")
     source_config = _read_json(config_path)
     if source_config.get("schema_version") != 1:
         raise ValueError("unsupported pinned source-pool configuration")
@@ -326,7 +332,7 @@ def _load_manifests(
             "sha256": digest,
             "source": source,
         }
-    return loaded, source_config, sha256_file(config_path)
+    return loaded, source_config, config_sha256
 
 
 def _key_component(value: Any) -> str:

@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -158,14 +159,23 @@ def test_manifest_loader_rejects_non_sha1_pins_and_accepts_exact40(
         "sources": {"Description": source},
     }
     config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(runner, "SOURCE_CONFIG_SHA256", runner.sha256_file(config_path))
 
     loaded, _, _ = runner._load_manifests(manifest_root, config_path)
     assert loaded["description"]["entries"] == [entry]
 
     source["input_revision"] += "c"
     config_path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="configuration hash differs"):
+        runner._load_manifests(manifest_root, config_path)
+    monkeypatch.setattr(runner, "SOURCE_CONFIG_SHA256", runner.sha256_file(config_path))
     with pytest.raises(ValueError, match="malformed pinned input_revision"):
         runner._load_manifests(manifest_root, config_path)
+
+
+def test_runner_pins_the_source_pool_configuration():
+    config_path = ROOT / "config" / "lucas-source-pools.json"
+    assert runner.sha256_file(config_path) == runner.SOURCE_CONFIG_SHA256
 
 
 def test_description_resolver_uses_zero_based_sentence_index(monkeypatch, tmp_path):
@@ -425,6 +435,52 @@ def test_grid5000_launcher_has_valid_shell_syntax():
         ["bash", "-n", str(LAUNCHER_PATH)], capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_grid5000_launcher_pins_the_inference_runner_hash():
+    launcher = LAUNCHER_PATH.read_text(encoding="utf-8")
+    match = re.search(
+        r'^EXPECTED_RUNNER_SHA256="([0-9a-f]{64})"$', launcher, re.MULTILINE
+    )
+    assert match is not None
+    assert match.group(1) == runner.sha256_file(RUNNER_PATH)
+    assert 'sha256sum "$RUNNER_PATH"' in launcher
+
+
+def test_grid5000_launcher_rejects_an_unpinned_runner(tmp_path):
+    code_root = tmp_path / "code"
+    (code_root / "config").mkdir(parents=True)
+    (code_root / "tools").mkdir()
+    (code_root / "config" / "lucas-source-pools.json").write_text("{}\n")
+    (code_root / "tools" / "lucas_main_category_inference.py").write_text(
+        "print('unapproved runner')\n"
+    )
+    run_root = tmp_path / "run"
+    manifests = run_root / "manifests"
+    manifests.mkdir(parents=True)
+    for name in ("description.json", "website.json", "combined-wiki.json"):
+        (manifests / name).write_text("{}\n")
+    runtime_root = tmp_path / "runtime-project"
+    runtime_root.mkdir()
+    (runtime_root / "pyproject.toml").write_text("[project]\nname = 'synthetic'\n")
+    (runtime_root / "uv.lock").write_text("version = 1\n")
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "OAR_JOB_ID": "123",
+            "LUCAS_CODE_ROOT": str(code_root),
+            "LUCAS_RUNTIME_PROJECT_ROOT": str(runtime_root),
+            "LUCAS_RUN_ROOT": str(run_root),
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(LAUNCHER_PATH)],
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert result.returncode == 2
+    assert "Inference runner does not match its QA pin." in result.stderr
 
 
 def test_grid5000_launcher_refuses_to_run_without_oar():

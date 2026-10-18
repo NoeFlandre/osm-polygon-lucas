@@ -22,6 +22,7 @@ UV_BIN="$RUNTIME_ROOT/bin/uv"
 UV_VERSION="0.11.16"
 RUNTIME_PYPROJECT_SHA256="88cf51fb7348346215aa892140babdb2dc4cc60a5e2af1cd71a829509cd8e632"
 RUNTIME_UV_LOCK_SHA256="96fa2cb67852952919e0ed76c6e4c9a9478d419cca373b7ed33aea8dc6f1dd67"
+EXPECTED_RUNNER_SHA256="11cd12ff0c763712169ffa8ee2b0e6cf9271f79318d3a9b8c5b760778db9a79e"
 
 for required_file in \
   "$CONFIG_PATH" \
@@ -36,6 +37,11 @@ for required_file in \
     exit 2
   fi
 done
+
+if [[ "$(sha256sum "$RUNNER_PATH" | cut -d ' ' -f 1)" != "$EXPECTED_RUNNER_SHA256" ]]; then
+  echo "Inference runner does not match its QA pin." >&2
+  exit 2
+fi
 
 if [[ "$(sha256sum "$RUNTIME_PROJECT_ROOT/pyproject.toml" | cut -d ' ' -f 1)" != "$RUNTIME_PYPROJECT_SHA256" ]]; then
   echo "Inference runtime pyproject does not match its QA pin." >&2
