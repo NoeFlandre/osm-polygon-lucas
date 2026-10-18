@@ -123,12 +123,14 @@ ALLOWED_DYNAMIC_IMPORTS = {
         "pyproj.database",
         "tools.lucas_description_census",
     },
+    "lucas_point_census_domain": set(),
     "lucas_point_source_census": {
         "pyarrow",
         "pyproj",
         "pyproj.database",
         "tools.lucas_direct_source_snapshot",
     },
+    "lucas_point_sampling": set(),
     "lucas_source_pool_census": {"pyarrow", "pyproj"},
 }
 DOMAIN_IO_CALLS = {
@@ -270,7 +272,7 @@ def test_runner_and_domain_modules_import_only_allowed_dependencies():
 
 
 def test_runner_dynamic_imports_are_explicit_and_local_or_runtime_only():
-    assert set(ALLOWED_DYNAMIC_IMPORTS).issubset(TOOL_MODULES)
+    assert set(ALLOWED_DYNAMIC_IMPORTS) == set(TOOL_MODULES)
     assert all(
         set(dynamic_imports(ROOT_DIR / "tools" / f"{module}.py")) == allowed
         for module, allowed in ALLOWED_DYNAMIC_IMPORTS.items()
