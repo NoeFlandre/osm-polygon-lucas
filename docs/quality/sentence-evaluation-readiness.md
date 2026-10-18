@@ -75,9 +75,11 @@ The Europe receipt is git-ignored at
 `data/quality/lucas-description-europe-census.jsonl`. Its per-region counts
 reconcile, but the checkpoint driver used for that run is also git-ignored.
 The tracked source-pool census now supports the three source schemas across
-the configured region scope and can read either Atlas outputs or exact-revision
-HF snapshots already in the local cache. The direct adapter has synthetic
-tests, but no complete tracked spatial run has reproduced the receipt. Treat
+the configured region scope and can read either Atlas outputs or HF cache paths
+matching the configured repository and revision names. It does not authenticate
+cached bytes against a trusted Hub commit manifest. The direct adapter has
+synthetic tests, but no complete tracked spatial run has reproduced the receipt.
+Treat
 the Europe aggregate as recorded evidence, not an independently reproducible
 tracked run; this provenance gate remains open.
 
@@ -147,8 +149,10 @@ Only 4 `yes` and 1 `no` joined to eligible polygons.
 
 The executable paths are `tools/lucas_description_census.py` for the bounded
 Description run and `tools/lucas_source_pool_census.py` for the three-source
-census. Its direct mode reads only exact-pinned snapshots already present in
-the local HF cache; it does not download source files or read sentence text.
+census. Its direct mode reads only cache paths matching the configured
+repository and revision names; it does not authenticate cached file bytes
+against a trusted Hub commit manifest, download source files, or read sentence
+text.
 The compact Austria and Belgium receipt remains local and git-ignored.
 
 ## Remaining source/reference pairs

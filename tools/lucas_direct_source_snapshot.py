@@ -22,7 +22,7 @@ from tools import lucas_source_pool_census as census
 
 
 def _validate_snapshot_root(path: Path, repository: str, revision: str) -> Path:
-    """Require the expected local cache path for the pinned revision; never download."""
+    """Check cache path components, not source-byte provenance; never download."""
     root = path.expanduser()
     cache_name = f"datasets--{repository.replace('/', '--')}"
     if (
@@ -947,7 +947,7 @@ def run_direct_source_pool_census(
     stream_names: list[str] | None = None,
     checkpoint_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Run a geometry-first census from exact-revision snapshots; never downloads."""
+    """Run a geometry-first census from configured-revision cache paths offline."""
     config = census._load_config(config_path)
     source = census._source_config(config, source_name)
     input_root = _validate_snapshot_root(

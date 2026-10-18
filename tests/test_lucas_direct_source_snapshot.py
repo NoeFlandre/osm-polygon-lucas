@@ -189,7 +189,7 @@ def test_stream_summary_does_not_apply_source_cohort_shortfall_target():
     assert summary["shortfall_from_target"] is None
 
 
-def test_snapshot_root_requires_exact_cache_repository_and_commit(tmp_path):
+def test_snapshot_root_checks_expected_repository_and_revision_path(tmp_path):
     expected = _snapshot_root(tmp_path, "owner/input", "a" * 40)
     assert _validate_snapshot_root(expected, "owner/input", "a" * 40) == expected
 
