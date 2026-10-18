@@ -11,7 +11,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = ROOT / "tools" / "lucas_main_category_inference.py"
-LAUNCHER_PATH = ROOT / "scripts" / "run_lucas_main_category_grid5000.sh"
+LAUNCHER_PATH = next(
+    launcher
+    for parent in Path(__file__).resolve().parents
+    if (
+        launcher := parent / "scripts" / "run_lucas_main_category_grid5000.sh"
+    ).is_file()
+)
 SPEC = importlib.util.spec_from_file_location(
     "lucas_main_category_inference_under_test", RUNNER_PATH
 )
