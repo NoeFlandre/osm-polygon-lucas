@@ -273,6 +273,9 @@ def test_runtime_info_is_pinned_to_versions_hardware_and_runtime_files(
 
     digest = runner._validate_runtime_info(info, runtime_project)
     assert len(digest) == 64
+    metadata_only_torch_version = {**info, "torch": "2.14.0"}
+    with pytest.raises(ValueError, match="runtime versions"):
+        runner._validate_runtime_info(metadata_only_torch_version, runtime_project)
 
     second_job_info = {**info, "oar_job_id": "123457", "node": "vercors18-1"}
     runtime_info_root = tmp_path / "output" / "runtime-info"
@@ -288,6 +291,66 @@ def test_runtime_info_is_pinned_to_versions_hardware_and_runtime_files(
     info["compute_capability"] = "7.5"
     with pytest.raises(ValueError, match="hardware"):
         runner._validate_runtime_info(info, runtime_project)
+
+
+@pytest.mark.parametrize(
+    ("torch_distribution_version", "accepted"),
+    [("2.14.0", True), ("2.14.1", False)],
+)
+def test_publish_metadata_accepts_normalized_torch_distribution_version(
+    monkeypatch, tmp_path, torch_distribution_version, accepted
+):
+    runtime_project = tmp_path / "runtime"
+    helper = (
+        runtime_project
+        / "src"
+        / "landuse_relevance_bench"
+        / "adapters"
+        / "choice_constraint.py"
+    )
+    helper.parent.mkdir(parents=True)
+    helper.write_text("synthetic helper", encoding="utf-8")
+    pyproject = runtime_project / "pyproject.toml"
+    lock = runtime_project / "uv.lock"
+    pyproject.write_text("synthetic runtime project", encoding="utf-8")
+    lock.write_text("synthetic runtime lock", encoding="utf-8")
+    monkeypatch.setattr(runner, "HELPER_SHA256", runner.sha256_file(helper))
+    monkeypatch.setattr(
+        runner, "RUNTIME_PYPROJECT_SHA256", runner.sha256_file(pyproject)
+    )
+    monkeypatch.setattr(runner, "RUNTIME_UV_LOCK_SHA256", runner.sha256_file(lock))
+    monkeypatch.setattr(runner, "PYTHON_VERSION", sys.version.split()[0])
+
+    distributions = {
+        "pyarrow": runner.PYARROW_VERSION,
+        "torch": torch_distribution_version,
+        "transformers": runner.TRANSFORMERS_VERSION,
+        "huggingface-hub": runner.HUGGINGFACE_HUB_VERSION,
+    }
+    monkeypatch.setattr(runner, "version", lambda name: distributions[name])
+
+    source = {
+        "input_repository": "synthetic/input",
+        "input_revision": "a" * 40,
+        "label_repository": "synthetic/labels",
+        "label_revision": "b" * 40,
+    }
+    manifests = {
+        cohort: {"source": source, "sha256": "c" * 64} for cohort in runner.COHORTS
+    }
+
+    assert runner._validate_runtime_info(_runtime_info(), runtime_project)
+    if not accepted:
+        with pytest.raises(ValueError, match="isolated runtime versions differ"):
+            runner._ensure_publish_metadata(
+                tmp_path / "output", manifests, "d" * 64, runtime_project
+            )
+        return
+
+    config, _ = runner._ensure_publish_metadata(
+        tmp_path / "output", manifests, "d" * 64, runtime_project
+    )
+    assert config["runtime_versions"]["torch"] == "2.14.0"
 
 
 def test_checkpoint_binds_runtime_and_rejects_source_text(tmp_path):

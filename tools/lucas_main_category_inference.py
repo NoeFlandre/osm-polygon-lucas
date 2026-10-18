@@ -775,7 +775,11 @@ def _load_generator(adapter_source: Path) -> tuple[LFMConstrainedGenerator, str]
         ChoiceConstraintConfig,
         ThinkingThenChoiceLogitsProcessor,
     )
-    from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed  # ty: ignore[unresolved-import]
+    from transformers import (  # ty: ignore[unresolved-import]
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        set_seed,
+    )
 
     if not torch.cuda.is_available():
         raise RuntimeError("Grid5000 GPU is not visible; refusing CPU inference")
@@ -1108,7 +1112,9 @@ def _ensure_publish_metadata(
     }
     expected_versions = {
         "pyarrow": PYARROW_VERSION,
-        "torch": TORCH_VERSION,
+        # Distribution metadata omits torch's CUDA local-version tag. The exact
+        # `2.14.0+cu130` build is checked in the launcher runtime metadata.
+        "torch": TORCH_VERSION.split("+", maxsplit=1)[0],
         "transformers": TRANSFORMERS_VERSION,
         "huggingface_hub": HUGGINGFACE_HUB_VERSION,
         "python": PYTHON_VERSION,
