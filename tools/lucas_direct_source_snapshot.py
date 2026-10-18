@@ -1103,7 +1103,7 @@ def run_direct_source_pool_census(
     ]
     return {
         "report_schema": "lucas-source-pool-census/v4",
-        "input_mode": "local-pinned-hf-cache-snapshots",
+        "input_mode": "local-configured-revision-cache-paths",
         "source_name": source_name,
         "source_id": source["source_id"],
         "source_display_label": source.get("display_label", source_name),

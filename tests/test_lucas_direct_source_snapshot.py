@@ -320,7 +320,7 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
         checkpoint_dir=checkpoint_dir,
     )
 
-    assert report["input_mode"] == "local-pinned-hf-cache-snapshots"
+    assert report["input_mode"] == "local-configured-revision-cache-paths"
     assert report["report_schema"] == "lucas-source-pool-census/v4"
     assert report["source_pins"]["input_revision"] == source["input_revision"]
     assert report["checkpointing"]["geometry_checkpoints_saved"] == 1
