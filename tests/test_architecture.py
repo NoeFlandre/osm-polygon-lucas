@@ -200,6 +200,23 @@ def imported_names(module_path: Path) -> list[str]:
 
 def dynamic_imports(module_path: Path) -> list[str]:
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    importlib_names = {"importlib"}
+    builtins_names = {"builtins", "__builtins__"}
+    getattr_names = {"getattr"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "importlib":
+                    importlib_names.add(alias.asname or "importlib")
+                if alias.name == "builtins":
+                    builtins_names.add(alias.asname or "builtins")
+        if isinstance(node, ast.ImportFrom) and node.module in {
+            "builtins",
+            "__builtin__",
+        }:
+            for alias in node.names:
+                if alias.name == "getattr":
+                    getattr_names.add(alias.asname or "getattr")
     parents = {
         child: node
         for node in ast.walk(tree)
@@ -220,6 +237,33 @@ def dynamic_imports(module_path: Path) -> list[str]:
             violations.append("unapproved dynamic import function")
         if isinstance(node, ast.Attribute) and node.attr == "__import__":
             violations.append("unapproved dynamic import function")
+        if isinstance(node, ast.Name) and node.id in getattr_names:
+            violations.append("unapproved dynamic import function")
+        if isinstance(node, ast.Attribute) and node.attr == "getattr":
+            violations.append("unapproved dynamic import function")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            helper = node.func.id
+            if helper in {"globals", "locals", "eval", "exec"}:
+                violations.append("unapproved dynamic namespace access")
+            elif helper == "vars":
+                if not node.args or (
+                    isinstance(node.args[0], ast.Name)
+                    and node.args[0].id in importlib_names | builtins_names
+                ):
+                    violations.append("namespace inspection on an import module")
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "__dict__"
+            and isinstance(node.value, ast.Name)
+            and node.value.id in importlib_names | builtins_names
+        ):
+            violations.append("namespace inspection on an import module")
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in importlib_names | builtins_names
+        ):
+            violations.append("dynamic indexing into an import namespace")
         if isinstance(node, ast.Attribute) and node.attr == "import_module":
             parent = parents.get(node)
             if not (
@@ -312,6 +356,30 @@ def test_runner_dynamic_imports_are_explicit_and_local_or_runtime_only():
         set(dynamic_imports(ROOT_DIR / "tools" / f"{module}.py")) == allowed
         for module, allowed in ALLOWED_DYNAMIC_IMPORTS.items()
     )
+
+
+def test_dynamic_import_allowlist_rejects_alias_and_namespace_bypasses(tmp_path):
+    examples = {
+        "from importlib import import_module\nimport_module('os')": "from-importlib",
+        "import importlib as il\nil.import_module('os')": "unapproved import_module",
+        "__import__('os')": "unapproved dynamic import",
+        "import importlib\nimportlib.import_module(target)": "string literal",
+        "import importlib\n"
+        "getattr(importlib, 'import_module')('os')": "unapproved dynamic import",
+        "getattr(__builtins__, '__import__')('os')": "unapproved dynamic import",
+        "import builtins as bi\n"
+        "bi.__dict__['__import__']('os')": "namespace inspection",
+        "import importlib\n"
+        "import builtins as b\n"
+        "b.getattr(importlib, 'import_module')('os')": "unapproved dynamic import",
+        "from builtins import getattr as g\n"
+        "import importlib\n"
+        "g(importlib, 'import_module')('os')": "unapproved dynamic import",
+    }
+    for index, (source, expected_violation) in enumerate(examples.items()):
+        module_path = tmp_path / f"dynamic_import_{index}.py"
+        module_path.write_text(source, encoding="utf-8")
+        assert any(expected_violation in item for item in dynamic_imports(module_path))
 
 
 def test_domain_transformations_do_not_perform_filesystem_io():
