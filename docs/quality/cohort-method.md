@@ -27,10 +27,11 @@ with 4 eligible `yes` and 1 eligible `no` sentence instances. Its checkpoint
 driver is git-ignored, so the Europe aggregate has not passed tracked-run
 reproduction. `tools/lucas_source_pool_census.py` now supports the 110-region
 scope for Description, Website, and Wikidata/Wikipedia source data. It can read
-either Atlas outputs or HF cache paths whose repository and revision components
-match the configuration. That path check does not authenticate cached bytes
-against a trusted Hub commit manifest. Direct mode does not download files, read
-sentence text, or require Atlas. The spatial census has not been run from those
+either Atlas outputs or local directories shaped like HF cache paths, with
+repository and revision components matching the configuration. This path check
+does not verify HF cache metadata or authenticate file bytes against a trusted
+Hub commit manifest. Direct mode does not download files, read sentence text,
+or require Atlas. The spatial census has not been run from those
 snapshots; see `docs/quality/sentence-evaluation-readiness.md` for the open
 reproduction gate and manifest counts.
 
@@ -48,20 +49,20 @@ census preserves that split and joins each stream by `sentence_id`.
 
 ### Direct source snapshots
 
-Direct mode accepts `--source-snapshot` and `--label-snapshot` paths that end
-at `datasets--OWNER--REPO/snapshots/<configured-revision>` in the existing HF
-Hub cache. It checks that the path components match the repository and revision
-configured in `config/lucas-source-pools.json`. This is a cache-path convention
-check: it does not authenticate cached file bytes against a trusted Hub commit
-manifest. The adapter never calls the Hub or downloads missing files. Select
-only needed source Parquet columns: Description keys and
+Direct mode accepts `--source-snapshot` and `--label-snapshot` directories with
+the HF cache layout `datasets--OWNER--REPO/snapshots/<configured-revision>`.
+It checks that the path components match the repository and revision configured
+in `config/lucas-source-pools.json`. This checks the path shape only; it does
+not verify HF cache metadata or authenticate file bytes against a trusted Hub
+commit manifest. The adapter never calls the Hub or downloads missing files.
+Select only needed source Parquet columns: Description keys and
 `sentence_count`, Website polygon IDs and sentence counts, Wiki sentence and
 document IDs, geometry, and source-label join fields. The sentence arrays and
 text columns are never requested. Wiki joins through document-to-polygon
 links, and Description polygons use stable `osm:<type>/<id>` keys.
 
-For example, with both configured revision paths already in the cache, run one small
-partition with:
+For example, with both configured revision paths already present locally, run
+one small partition with:
 
 ```sh
 uv run --locked --extra census python tools/lucas_source_pool_census.py \

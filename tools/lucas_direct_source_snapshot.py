@@ -22,7 +22,7 @@ from tools import lucas_source_pool_census as census
 
 
 def _validate_snapshot_root(path: Path, repository: str, revision: str) -> Path:
-    """Check cache path components, not source-byte provenance; never download."""
+    """Check HF-cache-shaped path components only; never verify Hub provenance."""
     root = path.expanduser()
     cache_name = f"datasets--{repository.replace('/', '--')}"
     if (
