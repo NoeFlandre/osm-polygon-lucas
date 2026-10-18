@@ -2096,6 +2096,10 @@ def test_combined_wiki_sample_coalesces_cross_stream_sentence_keys():
         "shared-1": "osm:way/1",
         "shared-2": "osm:way/4",
     }
+    assert {key: row["origin_region"] for key, row in selected_by_key.items()} == {
+        "shared-1": "albania",
+        "shared-2": "albania",
+    }
     assert cohort["repeated_partition_sentence_rows_coalesced"] == 4
     assert cohort["repeated_cross_stream_sentence_rows_coalesced"] == 2
     assert cohort["point_eligible_sentence_instances_by_status"] == {"yes": 2}
@@ -2113,6 +2117,29 @@ def test_combined_wiki_sample_coalesces_cross_stream_sentence_keys():
         for row in cohort["selected"]
     )
     assert cohort["selected_manifest"]["key_fields"] == ["sentence_id"]
+
+
+def test_merge_existing_wiki_stream_row_keeps_earliest_origin_region():
+    previous = {
+        "status": "yes",
+        "polygon_ids": ["osm:way/2"],
+        "origin_region": "zambia",
+        "origin_streams": {"wikipedia"},
+    }
+    row = {
+        "status": "yes",
+        "polygon_ids": ["osm:way/1"],
+        "origin_region": "albania",
+    }
+
+    census_domain._merge_existing_wiki_stream_row(previous, row, "wikivoyage")
+
+    assert previous == {
+        "status": "yes",
+        "polygon_ids": ["osm:way/1", "osm:way/2"],
+        "origin_region": "albania",
+        "origin_streams": {"wikipedia", "wikivoyage"},
+    }
 
 
 def test_combined_wiki_annotation_rejects_join_key_shape_mismatch():
