@@ -61,12 +61,8 @@ extra-paths = ["tests"]
 [tool.mutmut]
 source_paths = [
     "src/osm_polygon_lucas",
-    "tools/lucas_description_census.py",
-    "tools/lucas_direct_source_snapshot.py",
     "tools/lucas_point_census_domain.py",
-    "tools/lucas_point_sampling.py",
     "tools/lucas_point_source_census.py",
-    "tools/lucas_source_pool_census.py",
 ]
 pytest_add_cli_args_test_selection = ["tests"]
 also_copy = ["tools/"]

@@ -8,12 +8,19 @@ cyclomatic complexity at most 5, and every measured line and branch CRAP score
 must remain strictly below 6. The thresholds and selected files match the
 established baseline.
 
-The following census tools are outside those numeric metrics:
+The following census tools are outside those numeric metrics and the mutation
+source scope:
 `lucas_description_census.py`, `lucas_direct_source_snapshot.py`,
 `lucas_point_sampling.py`, and `lucas_source_pool_census.py`. Their import
 boundaries and dynamic imports are checked by `tests/test_architecture.py`, and
-their code is included in the full hosted mutation run. Passing the scoped
-numeric check must not be read as a CRAP or complexity result for these files.
+they are exercised by the synthetic test suite. Passing the scoped numeric or
+mutation checks must not be read as a CRAP, complexity, or mutation result for
+these files.
+
+The hosted mutation run covers the installable package plus the same two
+point-census modules as the established baseline:
+`tools/lucas_point_census_domain.py` and
+`tools/lucas_point_source_census.py`.
 
 Hosted QA also runs the complete synthetic test suite, Ruff lint and format,
 `ty`, a strict MkDocs build, package and CLI smoke checks, and a Docker build
