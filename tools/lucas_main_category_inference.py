@@ -1325,7 +1325,7 @@ def run(args: argparse.Namespace) -> int:
     output_root = args.output_root.resolve()
     scratch_root = args.scratch_root.resolve()
     _require_scratch_isolated_from_publish(output_root, scratch_root)
-    if getattr(args, "validate_sources_only", False):
+    if args.validate_sources_only:
         return _validate_sources_only(manifest_root, config_path, scratch_root)
     runtime_project = args.runtime_project.resolve()
     runtime_info_path = args.runtime_info.resolve()
