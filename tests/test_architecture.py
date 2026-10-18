@@ -202,51 +202,57 @@ def dynamic_imports(module_path: Path) -> list[str]:
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
     importlib_names = {"importlib"}
     builtins_names = {"builtins", "__builtins__"}
-    getattr_names = {"getattr"}
+    dynamic_import_helpers = {"__import__", "import_module", "getattr"}
+    dynamic_namespace_helpers = {"eval", "exec", "globals", "locals", "vars"}
+    imported_dynamic_import_helpers = set(dynamic_import_helpers)
+    imported_dynamic_namespace_helpers = set(dynamic_namespace_helpers)
+    violations = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "importlib":
                     importlib_names.add(alias.asname or "importlib")
+                elif alias.name.startswith("importlib."):
+                    violations.append("unapproved importlib submodule")
                 if alias.name == "builtins":
                     builtins_names.add(alias.asname or "builtins")
+        if isinstance(node, ast.ImportFrom) and node.module == "importlib":
+            violations.append("unapproved from-importlib namespace import")
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "importlib.metadata"
+            and any(alias.name != "version" for alias in node.names)
+        ):
+            violations.append("unapproved importlib.metadata API")
         if isinstance(node, ast.ImportFrom) and node.module in {
             "builtins",
             "__builtin__",
         }:
             for alias in node.names:
-                if alias.name == "getattr":
-                    getattr_names.add(alias.asname or "getattr")
+                if alias.name in dynamic_import_helpers:
+                    imported_dynamic_import_helpers.add(alias.asname or alias.name)
+                if alias.name in dynamic_namespace_helpers:
+                    imported_dynamic_namespace_helpers.add(alias.asname or alias.name)
     parents = {
-        child: node
-        for node in ast.walk(tree)
-        for child in ast.iter_child_nodes(node)
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
     }
-    violations = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "importlib":
-            if any(alias.name == "import_module" for alias in node.names):
-                violations.append("from-importlib import_module alias")
-        if isinstance(node, ast.ImportFrom) and node.module in {
-            "builtins",
-            "__builtin__",
-        }:
-            if any(alias.name == "__import__" for alias in node.names):
-                violations.append("from-builtins __import__ alias")
-        if isinstance(node, ast.Name) and node.id in {"__import__", "import_module"}:
+        if isinstance(node, ast.Name) and node.id in imported_dynamic_import_helpers:
             violations.append("unapproved dynamic import function")
-        if isinstance(node, ast.Attribute) and node.attr in {
-            "__import__",
-            "__getattribute__",
-            "__getattr__",
-        }:
+        if isinstance(node, ast.Attribute) and node.attr in (
+            dynamic_import_helpers - {"import_module"}
+        ) | {"__getattribute__", "__getattr__"}:
             violations.append("unapproved dynamic import function")
-        if isinstance(node, ast.Name) and node.id in getattr_names:
-            violations.append("unapproved dynamic import function")
-        if isinstance(node, ast.Attribute) and node.attr == "getattr":
-            violations.append("unapproved dynamic import function")
+        if isinstance(node, ast.Name) and node.id in imported_dynamic_namespace_helpers:
+            violations.append("unapproved dynamic namespace access")
+        if isinstance(node, ast.Attribute) and node.attr in dynamic_namespace_helpers:
+            violations.append("unapproved dynamic namespace access")
         if isinstance(node, ast.Name) and node.id == "__builtins__":
             violations.append("unapproved builtins namespace reference")
+        if isinstance(node, ast.Attribute) and node.attr == "__builtins__":
+            violations.append("unapproved builtins namespace reference")
+        if isinstance(node, ast.Attribute) and node.attr == "__globals__":
+            violations.append("unapproved function globals access")
         if isinstance(node, ast.Name) and node.id in importlib_names:
             import_attribute = parents.get(node)
             direct_call = (
@@ -262,23 +268,8 @@ def dynamic_imports(module_path: Path) -> list[str]:
                 and direct_call.func is import_attribute
             ):
                 violations.append("unapproved importlib namespace reference")
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            helper = node.func.id
-            if helper in {"globals", "locals", "eval", "exec"}:
-                violations.append("unapproved dynamic namespace access")
-            elif helper == "vars":
-                if not node.args or (
-                    isinstance(node.args[0], ast.Name)
-                    and node.args[0].id in importlib_names | builtins_names
-                ):
-                    violations.append("namespace inspection on an import module")
-        if (
-            isinstance(node, ast.Attribute)
-            and node.attr == "__dict__"
-            and isinstance(node.value, ast.Name)
-            and node.value.id in importlib_names | builtins_names
-        ):
-            violations.append("namespace inspection on an import module")
+        if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+            violations.append("module namespace inspection")
         if (
             isinstance(node, ast.Subscript)
             and isinstance(node.value, ast.Name)
@@ -381,7 +372,28 @@ def test_runner_dynamic_imports_are_explicit_and_local_or_runtime_only():
 
 def test_dynamic_import_allowlist_rejects_alias_and_namespace_bypasses(tmp_path):
     examples = {
-        "from importlib import import_module\nimport_module('os')": "from-importlib",
+        "from importlib import import_module\nimport_module('os')": (
+            "from-importlib namespace"
+        ),
+        "from importlib import util as iu\n"
+        "spec = iu.find_spec('os')\n"
+        "module = iu.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)": "from-importlib namespace",
+        "import importlib.util as iu\niu.find_spec('os')": "importlib submodule",
+        "from importlib.metadata import entry_points\n"
+        "entry_points().select(group='console_scripts')[0].load()": (
+            "importlib.metadata API"
+        ),
+        "import importlib\n"
+        "module = importlib.import_module('tools.lucas_description_census')\n"
+        "module.__dict__['__builtins__']['__import__']('os')": (
+            "module namespace inspection"
+        ),
+        "import importlib\n"
+        "module = importlib.import_module('tools.lucas_description_census')\n"
+        "module.census.__globals__['__builtins__']['__import__']('os')": (
+            "function globals access"
+        ),
         "import importlib as il\nil.import_module('os')": "unapproved import_module",
         "__import__('os')": "unapproved dynamic import",
         "import importlib\nimportlib.import_module(target)": "string literal",
@@ -396,8 +408,13 @@ def test_dynamic_import_allowlist_rejects_alias_and_namespace_bypasses(tmp_path)
         "from builtins import getattr as g\n"
         "import importlib\n"
         "g(importlib, 'import_module')('os')": "unapproved dynamic import",
-        "import importlib\n"
-        "object.__getattribute__(importlib, 'import_module')('os')": (
+        "import builtins as bi\nbi.eval(\"__import__('os')\")": (
+            "unapproved dynamic namespace access"
+        ),
+        "from builtins import eval as run\nrun(\"__import__('os')\")": (
+            "unapproved dynamic namespace access"
+        ),
+        "import importlib\nobject.__getattribute__(importlib, 'import_module')('os')": (
             "unapproved dynamic import"
         ),
     }
