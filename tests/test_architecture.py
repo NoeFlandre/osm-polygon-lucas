@@ -4,6 +4,44 @@ from pathlib import Path
 PACKAGE_DIR = Path(__file__).resolve().parents[1] / "src" / "osm_polygon_lucas"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TOOL_MODULES = {
+    "lucas_description_census": {
+        "__future__",
+        "argparse",
+        "collections",
+        "dataclasses",
+        "hashlib",
+        "importlib",
+        "json",
+        "osm_polygon_lucas",
+        "pathlib",
+        "pyarrow.parquet",
+        "pyproj",
+        "shapely",
+        "shapely.errors",
+        "shapely.geometry",
+        "shapely.geometry.base",
+        "shapely.strtree",
+        "typing",
+    },
+    "lucas_direct_source_snapshot": {
+        "__future__",
+        "collections",
+        "collections.abc",
+        "hashlib",
+        "importlib",
+        "json",
+        "math",
+        "os",
+        "pathlib",
+        "pyarrow.parquet",
+        "shapely",
+        "shapely.errors",
+        "shapely.geometry",
+        "shapely.geometry.base",
+        "tools",
+        "typing",
+        "uuid",
+    },
     "lucas_point_census_domain": {
         "__future__",
         "collections",
@@ -43,14 +81,55 @@ TOOL_MODULES = {
         "tools.lucas_point_sampling",
         "tools.lucas_source_pool_census",
     },
+    "lucas_point_sampling": {
+        "__future__",
+        "collections",
+        "collections.abc",
+        "dataclasses",
+        "h3",
+        "hashlib",
+        "importlib.metadata",
+        "math",
+        "types",
+        "typing",
+    },
+    "lucas_source_pool_census": {
+        "__future__",
+        "argparse",
+        "collections",
+        "collections.abc",
+        "hashlib",
+        "importlib",
+        "json",
+        "math",
+        "pathlib",
+        "pyarrow.parquet",
+        "pyproj",
+        "re",
+        "shapely",
+        "shapely.errors",
+        "shapely.geometry",
+        "shapely.geometry.base",
+        "tools.lucas_description_census",
+        "tools.lucas_direct_source_snapshot",
+        "typing",
+    },
 }
 ALLOWED_DYNAMIC_IMPORTS = {
+    "lucas_description_census": {"pyarrow", "pyproj"},
+    "lucas_direct_source_snapshot": {
+        "pyarrow",
+        "pyproj",
+        "pyproj.database",
+        "tools.lucas_description_census",
+    },
     "lucas_point_source_census": {
         "pyarrow",
         "pyproj",
         "pyproj.database",
         "tools.lucas_direct_source_snapshot",
-    }
+    },
+    "lucas_source_pool_census": {"pyarrow", "pyproj"},
 }
 DOMAIN_IO_CALLS = {
     "exists",
@@ -178,11 +257,9 @@ def test_package_modules_import_only_their_allowed_dependencies():
 
 def test_runner_and_domain_modules_import_only_allowed_dependencies():
     tool_paths = {
-        path.stem: path
-        for path in (ROOT_DIR / "tools").glob("lucas_point_*.py")
-        if path.stem in TOOL_MODULES
+        module: ROOT_DIR / "tools" / f"{module}.py" for module in TOOL_MODULES
     }
-    assert set(tool_paths) == set(TOOL_MODULES)
+    assert all(path.is_file() for path in tool_paths.values())
     violations = [
         f"{module} imports {name}"
         for module, path in tool_paths.items()
@@ -193,10 +270,16 @@ def test_runner_and_domain_modules_import_only_allowed_dependencies():
 
 
 def test_runner_dynamic_imports_are_explicit_and_local_or_runtime_only():
-    tool_path = ROOT_DIR / "tools" / "lucas_point_source_census.py"
-    assert set(dynamic_imports(tool_path)) == ALLOWED_DYNAMIC_IMPORTS[tool_path.stem]
+    assert set(ALLOWED_DYNAMIC_IMPORTS).issubset(TOOL_MODULES)
+    assert all(
+        set(dynamic_imports(ROOT_DIR / "tools" / f"{module}.py")) == allowed
+        for module, allowed in ALLOWED_DYNAMIC_IMPORTS.items()
+    )
 
 
 def test_domain_transformations_do_not_perform_filesystem_io():
-    domain_path = ROOT_DIR / "tools" / "lucas_point_census_domain.py"
-    assert domain_io_calls(domain_path) == []
+    domain_paths = (
+        ROOT_DIR / "tools" / "lucas_point_census_domain.py",
+        ROOT_DIR / "tools" / "lucas_point_sampling.py",
+    )
+    assert all(domain_io_calls(path) == [] for path in domain_paths)

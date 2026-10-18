@@ -6,9 +6,10 @@ polygon-area method or its strict 80% coverage threshold.
 The [LUCAS Copernicus 2022 protocol paper](https://essd.copernicus.org/articles/16/5723/2024/)
 states that the surveyor records the Copernicus class at the position reached;
 that position may differ from the theoretical LUCAS sample point. The point
-reader therefore selects only `survey_gps_lat`, `survey_gps_long`, and the
-Copernicus module class `surveycprnlc`. It does not load `point_lat`,
-`point_long`, or `survey_lc1` into the point method.
+reader uses `survey_gps_lat`, `survey_gps_long`, and the Copernicus module class
+`surveycprnlc` as coordinate and class evidence. It also reads observation
+identifiers and quality fields for the filters below. It does not load
+`point_lat`, `point_long`, or `survey_lc1` into the point method.
 
 ## Frozen observation policy
 

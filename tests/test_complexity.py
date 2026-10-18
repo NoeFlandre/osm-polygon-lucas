@@ -6,8 +6,12 @@ from radon.visitors import Class
 ROOT_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_DIR = ROOT_DIR / "src" / "osm_polygon_lucas"
 NEW_PRODUCTION_FILES = (
+    ROOT_DIR / "tools" / "lucas_description_census.py",
+    ROOT_DIR / "tools" / "lucas_direct_source_snapshot.py",
     ROOT_DIR / "tools" / "lucas_point_census_domain.py",
+    ROOT_DIR / "tools" / "lucas_point_sampling.py",
     ROOT_DIR / "tools" / "lucas_point_source_census.py",
+    ROOT_DIR / "tools" / "lucas_source_pool_census.py",
 )
 MAX_COMPLEXITY = 5
 

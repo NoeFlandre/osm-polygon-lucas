@@ -35,7 +35,7 @@ or require Atlas. The spatial census has not been run from those
 snapshots; see `docs/quality/sentence-evaluation-readiness.md` for the open
 reproduction gate and manifest counts.
 
-Install the bounded-census dependencies with `uv sync --extra census`. Before
+Install the bounded-census dependencies with `uv sync --group census`. Before
 spatial processing, each runner streams the pinned LUCAS GeoPackage through
 SHA-256 and checks its digest and byte size against
 `config/lucas-2022-source.json`. Each spatial receipt records that both checks
@@ -65,7 +65,7 @@ For example, with both configured revision paths already present locally, run
 one small partition with:
 
 ```sh
-uv run --locked --extra census python tools/lucas_source_pool_census.py \
+uv run --locked --group census python tools/lucas_source_pool_census.py \
   --source Description \
   --source-snapshot "$HF_HUB_CACHE/datasets--NoeFlandre--osm-polygon-description-tag/snapshots/b4706eb315c66a8a57135289e7612dca8e03caf8" \
   --label-snapshot "$HF_HUB_CACHE/datasets--NoeFlandre--osm-polygon-description-tag-landuse/snapshots/ce98b328f3c6543800a3d931877b51eb3f0cf768" \
@@ -193,9 +193,15 @@ Description × LUCAS counts-only run on one CPU core at code commit
 `a03baebce2b6d53bb4ed439b5c0846da939ccc34`; its summary remains on Grid home.
 This single-source run does not clear the nine-cohort gate.
 
-Do not start sampling or inference, or request compute for either, until all
-nine eligible `yes`/`no` counts and pinned manifests are complete. Run the live
-Grid5000 policy check on a frontend before every allocation request. The prior
-Wiki-only throughput measurement is a planning estimate, not evidence for
-these cohorts. No inference allocation or external outreach is authorized by
-this plan.
+This nine-cohort gate applies to the sentence cohorts in this document. The
+separate LUCAS point cohorts have their own limited authorization and gates in
+`sentence-evaluation-readiness.md`; that authorization does not apply to these
+sentence cohorts or authorize new compute allocations or inference here.
+
+The bounded CPU counts-only census is the only pre-gate compute exception. It
+requires explicit authorization and the live allocation checks above. For the
+sentence cohorts in this document, do not sample or run inference, or request
+compute for those operations, until all nine eligible `yes`/`no` counts and
+pinned manifests are complete. The prior Wiki-only throughput measurement is a
+planning estimate, not evidence for these cohorts. This plan does not authorize
+inference allocations or external outreach.

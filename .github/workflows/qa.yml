@@ -32,7 +32,14 @@ jobs:
       - name: Enforce the per-function CRAP limit
         run: |
           uv run --locked coverage json --pretty-print -o "$RUNNER_TEMP/coverage.json"
-          uv run --locked radon cc --json src/osm_polygon_lucas tools/lucas_point_census_domain.py tools/lucas_point_source_census.py > "$RUNNER_TEMP/radon.json"
+          uv run --locked radon cc --json src/osm_polygon_lucas \
+            tools/lucas_description_census.py \
+            tools/lucas_direct_source_snapshot.py \
+            tools/lucas_point_census_domain.py \
+            tools/lucas_point_sampling.py \
+            tools/lucas_point_source_census.py \
+            tools/lucas_source_pool_census.py \
+            > "$RUNNER_TEMP/radon.json"
           uv run --locked python tools/check_crap.py "$RUNNER_TEMP/coverage.json" "$RUNNER_TEMP/radon.json" --max-crap 6
       - run: uv run --locked mkdocs build --strict
       - run: uv build
