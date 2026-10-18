@@ -235,12 +235,33 @@ def dynamic_imports(module_path: Path) -> list[str]:
                 violations.append("from-builtins __import__ alias")
         if isinstance(node, ast.Name) and node.id in {"__import__", "import_module"}:
             violations.append("unapproved dynamic import function")
-        if isinstance(node, ast.Attribute) and node.attr == "__import__":
+        if isinstance(node, ast.Attribute) and node.attr in {
+            "__import__",
+            "__getattribute__",
+            "__getattr__",
+        }:
             violations.append("unapproved dynamic import function")
         if isinstance(node, ast.Name) and node.id in getattr_names:
             violations.append("unapproved dynamic import function")
         if isinstance(node, ast.Attribute) and node.attr == "getattr":
             violations.append("unapproved dynamic import function")
+        if isinstance(node, ast.Name) and node.id == "__builtins__":
+            violations.append("unapproved builtins namespace reference")
+        if isinstance(node, ast.Name) and node.id in importlib_names:
+            import_attribute = parents.get(node)
+            direct_call = (
+                parents.get(import_attribute)
+                if isinstance(import_attribute, ast.Attribute)
+                else None
+            )
+            if not (
+                isinstance(import_attribute, ast.Attribute)
+                and import_attribute.attr == "import_module"
+                and import_attribute.value is node
+                and isinstance(direct_call, ast.Call)
+                and direct_call.func is import_attribute
+            ):
+                violations.append("unapproved importlib namespace reference")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             helper = node.func.id
             if helper in {"globals", "locals", "eval", "exec"}:
@@ -375,6 +396,10 @@ def test_dynamic_import_allowlist_rejects_alias_and_namespace_bypasses(tmp_path)
         "from builtins import getattr as g\n"
         "import importlib\n"
         "g(importlib, 'import_module')('os')": "unapproved dynamic import",
+        "import importlib\n"
+        "object.__getattribute__(importlib, 'import_module')('os')": (
+            "unapproved dynamic import"
+        ),
     }
     for index, (source, expected_violation) in enumerate(examples.items()):
         module_path = tmp_path / f"dynamic_import_{index}.py"
