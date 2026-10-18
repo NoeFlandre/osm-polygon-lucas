@@ -124,7 +124,72 @@ def _source_files(source_name, source, input_root, label_root):
     )
 
 
-def test_snapshot_root_requires_exact_cache_repository_and_commit(tmp_path):
+def test_input_fingerprint_detects_same_size_content_change(tmp_path):
+    path = tmp_path / "snapshot.parquet"
+    path.write_bytes(b"first")
+
+    first, _ = direct_snapshot._input_file_fingerprint(path, include_content_hash=True)
+    path.write_bytes(b"other")
+    second, _ = direct_snapshot._input_file_fingerprint(path, include_content_hash=True)
+
+    assert first["size_bytes"] == second["size_bytes"]
+    assert first["sha256"] != second["sha256"]
+
+
+def test_input_fingerprint_skips_content_hash_without_checkpoints(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "snapshot.parquet"
+    path.write_bytes(b"small fixture")
+    monkeypatch.setattr(
+        census,
+        "_file_sha256",
+        lambda _path: pytest.fail("unneeded content hash was computed"),
+    )
+
+    fingerprint, signature = direct_snapshot._input_file_fingerprint(
+        path, include_content_hash=False
+    )
+
+    assert fingerprint == {"size_bytes": len(b"small fixture")}
+    assert signature[2] == len(b"small fixture")
+
+
+def test_input_fingerprint_rejects_change_while_hashing(tmp_path, monkeypatch):
+    path = tmp_path / "snapshot.parquet"
+    path.write_bytes(b"first")
+    original_sha256 = census._file_sha256
+    original_signature = census._asset_signature
+    signature_calls = 0
+
+    def hash_then_change(input_path):
+        digest = original_sha256(input_path)
+        input_path.write_bytes(b"other")
+        return digest
+
+    def changed_signature(input_path):
+        nonlocal signature_calls
+        signature = original_signature(input_path)
+        signature_calls += 1
+        if signature_calls == 1:
+            return signature
+        return (*signature[:3], signature[3] + 1, signature[4] + 1)
+
+    monkeypatch.setattr(census, "_file_sha256", hash_then_change)
+    monkeypatch.setattr(census, "_asset_signature", changed_signature)
+
+    with pytest.raises(ValueError, match="configured source file changed"):
+        direct_snapshot._input_file_fingerprint(path, include_content_hash=True)
+
+
+def test_stream_summary_does_not_apply_source_cohort_shortfall_target():
+    summary = direct_snapshot._sum_direct_region_results([])
+
+    assert summary["shortfall_scope_complete"] is False
+    assert summary["shortfall_from_target"] is None
+
+
+def test_snapshot_root_checks_expected_repository_and_revision_path(tmp_path):
     expected = _snapshot_root(tmp_path, "owner/input", "a" * 40)
     assert _validate_snapshot_root(expected, "owner/input", "a" * 40) == expected
 
@@ -255,7 +320,7 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
         checkpoint_dir=checkpoint_dir,
     )
 
-    assert report["input_mode"] == "local-pinned-hf-cache-snapshots"
+    assert report["input_mode"] == "local-configured-revision-cache-paths"
     assert report["report_schema"] == "lucas-source-pool-census/v4"
     assert report["source_pins"]["input_revision"] == source["input_revision"]
     assert report["checkpointing"]["geometry_checkpoints_saved"] == 1
@@ -263,6 +328,30 @@ def test_direct_snapshot_census_uses_source_keys_without_reading_text(
     assert report["checkpointing"]["lucas_asset_hash_reused"] is False
     geometry_checkpoint = next((checkpoint_dir / "geometry").glob("*.json"))
     identity = json.loads(geometry_checkpoint.read_text(encoding="utf-8"))["identity"]
+    polygon_path = input_root / source["direct_input"]["polygon_path_template"].format(
+        region="albania", stream=selected_streams[0]
+    )
+    assert (
+        identity["polygon_sha256"]
+        == hashlib.sha256(polygon_path.read_bytes()).hexdigest()
+    )
+    result_checkpoint = next((checkpoint_dir / "results").glob("*.json"))
+    result_identity = json.loads(result_checkpoint.read_text(encoding="utf-8"))[
+        "identity"
+    ]
+    stream = census._stream_config(source, selected_streams[0])
+    label_path = label_root / stream["labels_path_template"].format(
+        region="albania", stream=selected_streams[0]
+    )
+    assert (
+        result_identity["label_sha256"]
+        == hashlib.sha256(label_path.read_bytes()).hexdigest()
+    )
+    assert all(
+        entry["sha256"]
+        == hashlib.sha256((input_root / entry["name"]).read_bytes()).hexdigest()
+        for entry in result_identity["required_text_files"]
+    )
     assert set(identity["code_identity"]) == {
         "direct_source_tool_sha256",
         "source_pool_census_tool_sha256",
@@ -657,3 +746,18 @@ def test_website_null_sentence_count_means_optional_field_is_absent(monkeypatch)
             "polygon_ids": ["poly-7"],
         }
     ]
+
+
+def test_direct_checkpoint_result_digest_rejects_tampering(tmp_path):
+    path = tmp_path / "checkpoint.json"
+    identity = {"source_id": "description", "region": "albania"}
+    result = {"eligible_polygon_count": 1}
+
+    direct_snapshot._write_checkpoint(path, "fixture/v1", identity, result)
+    checkpoint = json.loads(path.read_text(encoding="utf-8"))
+    assert "result_sha256" in checkpoint
+    checkpoint["result"]["eligible_polygon_count"] = 2
+    path.write_text(json.dumps(checkpoint), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checkpoint payload digest mismatch"):
+        direct_snapshot._read_checkpoint(path, "fixture/v1", identity)

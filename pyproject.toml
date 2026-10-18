@@ -37,6 +37,7 @@ dev = [
 ]
 docs = ["mkdocs==1.6.1"]
 census = [
+    "h3==4.5.0",
     "pyarrow==25.0.1",
     "pyproj==3.7.1; python_full_version < '3.12'",
     "pyproj==3.8.0; python_full_version >= '3.12'",
@@ -58,7 +59,11 @@ python-version = "3.11"
 extra-paths = ["tests"]
 
 [tool.mutmut]
-source_paths = ["src/osm_polygon_lucas"]
+source_paths = [
+    "src/osm_polygon_lucas",
+    "tools/lucas_point_census_domain.py",
+    "tools/lucas_point_source_census.py",
+]
 pytest_add_cli_args_test_selection = ["tests"]
 also_copy = ["tools/"]
 # Mutmut injects trampoline imports; architecture is checked against unmutated source in QA.

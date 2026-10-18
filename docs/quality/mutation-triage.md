@@ -1,4 +1,4 @@
-# GeoPackage loader mutation triage
+# Mutation triage
 
 ## Current hosted mutation survivors
 
@@ -6,6 +6,14 @@ The mutation job compares every surviving mutant ID against this table. An undoc
 
 | Mutant ID | Reason |
 | --- | --- |
+| `tools.lucas_point_census_domain.x_sample_combined_wiki_cohort__mutmut_3` | The mutation only changes the wording of the empty-stream `ValueError`; the same input still fails at the same boundary, and exact diagnostic wording is not a public contract. |
+| `tools.lucas_point_census_domain.x_sample_combined_wiki_cohort__mutmut_4` | The mutation only changes capitalization in the empty-stream `ValueError`; the same input still fails at the same boundary, and exact diagnostic capitalization is not a public contract. |
+| `tools.lucas_point_census_domain.x__merge_existing_wiki_stream_row__mutmut_7` | The mutation only changes the conflicting-label `ValueError` wording; label conflicts still fail at the same boundary, and exact diagnostic wording is not a public contract. |
+| `tools.lucas_point_census_domain.x__merge_existing_wiki_stream_row__mutmut_8` | The mutation only changes capitalization in the conflicting-label `ValueError`; label conflicts still fail at the same boundary, and exact diagnostic capitalization is not a public contract. |
+| `tools.lucas_point_census_domain.x__merge_wiki_stream_row__mutmut_9` | The metadata mapping is keyed by the canonical sentence ID, and the annotator reads the natural key, region, and provenance from its value; the value's redundant `sentence_id` is never read. |
+| `tools.lucas_point_census_domain.x__merge_wiki_stream_row__mutmut_10` | The metadata mapping is keyed by the canonical sentence ID, and the annotator reads the natural key, region, and provenance from its value; the value's redundant `sentence_id` is never read. |
+| `tools.lucas_point_census_domain.x__merge_wiki_stream_row__mutmut_11` | The original row already supplies the consumed `polygon_ids` field; this mutation only adds an unused misspelled alias to the metadata dictionary. |
+| `tools.lucas_point_census_domain.x__merge_wiki_stream_row__mutmut_12` | The original row already supplies the consumed `polygon_ids` field; this mutation only adds an unused uppercase alias to the metadata dictionary. |
 | `osm_polygon_lucas.cli.x__report_text__mutmut_30` | `None` and `False` are both falsey. `json.dumps` rejects non-finite numbers in either case. |
 | `osm_polygon_lucas.cli.x__read_osm_wkt__mutmut_10` | Python resolves `UTF-8` and `utf-8` to the same codec. |
 | `osm_polygon_lucas.cli.x__source_manifest__mutmut_11` | Python resolves `UTF-8` and `utf-8` to the same codec. |
@@ -45,6 +53,106 @@ The mutation job compares every surviving mutant ID against this table. An undoc
 | `osm_polygon_lucas.point_coverage.x__decisions__mutmut_16` | Only the message for an impossible internal missing-anchor invariant changes; the same `ValueError` is raised. |
 | `osm_polygon_lucas.point_coverage.x__decisions__mutmut_17` | Only the missing-anchor diagnostic text changes; the same internal `ValueError` is raised. |
 | `osm_polygon_lucas.point_coverage.x__decisions__mutmut_18` | Only the capitalization of the missing-anchor diagnostic changes; the same internal `ValueError` is raised. |
+| `tools.lucas_point_census_domain.x__candidate_link__mutmut_13` | Only the diagnostic truncation changes: it lists one extra unknown polygon ID; candidate rejection and returned results are unchanged. |
+| `tools.lucas_point_census_domain.x__checkpoint_maps__mutmut_11` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__checkpoint_maps__mutmut_19` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__coordinate_pair__mutmut_17` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__coordinate_pair__mutmut_4` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__label_fields__mutmut_13` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__merge_partition_row__mutmut_20` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__merge_polygon_links__mutmut_13` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__record_label__mutmut_4` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__replayed_candidate_keys__mutmut_16` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validate_anchor_bounds__mutmut_16` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validate_label_join__mutmut_14` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validate_label_join__mutmut_3` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validate_label_join__mutmut_4` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validate_label_join__mutmut_9` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validate_polygon_label__mutmut_5` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validate_sentence_index__mutmut_7` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validated_anchor__mutmut_5` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x__validated_links__mutmut_12` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x_canonical_json__mutmut_2` | `ensure_ascii=None` and `ensure_ascii=False` select the same encoder in Python, so serialized bytes are unchanged. |
+| `tools.lucas_point_census_domain.x_collect_candidate_links__mutmut_22` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x_collect_candidate_links__mutmut_23` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x_collect_candidate_links__mutmut_24` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x_invalid_geometry_digest__mutmut_11` | Python resolves these codec names case-insensitively; the resulting UTF-8/ASCII bytes and decoded text are unchanged. |
+| `tools.lucas_point_census_domain.x_invalid_geometry_digest__mutmut_17` | Python resolves these codec names case-insensitively; the resulting UTF-8/ASCII bytes and decoded text are unchanged. |
+| `tools.lucas_point_census_domain.x_invalid_geometry_digest__mutmut_7` | Python resolves these codec names case-insensitively; the resulting UTF-8/ASCII bytes and decoded text are unchanged. |
+| `tools.lucas_point_census_domain.x_payload_sha256__mutmut_5` | Python resolves these codec names case-insensitively; the resulting UTF-8/ASCII bytes and decoded text are unchanged. |
+| `tools.lucas_point_census_domain.x_validate_text_key_replay__mutmut_10` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x_validate_text_key_replay__mutmut_13` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x_validate_text_key_replay__mutmut_14` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_census_domain.x_validate_text_key_replay__mutmut_15` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__all_polygon_paths__mutmut_16` | The affected pinned geometry or label path template contains no `{stream}` placeholder; stream-specific source paths use separate text/label templates. The resolved path is unchanged for the configured pools. |
+| `tools.lucas_point_source_census.x__all_polygon_paths__mutmut_18` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__all_polygon_paths__mutmut_9` | The affected pinned geometry or label path template contains no `{stream}` placeholder; stream-specific source paths use separate text/label templates. The resolved path is unchanged for the configured pools. |
+| `tools.lucas_point_source_census.x__checkpoint_path__mutmut_16` | For valid run identities, at least one of `source_id`, `region`, or `stream` is present, so the fallback stem is unreachable; its spelling cannot change a valid checkpoint path. |
+| `tools.lucas_point_source_census.x__checkpoint_path__mutmut_17` | For valid run identities, at least one of `source_id`, `region`, or `stream` is present, so the fallback stem is unreachable; its spelling cannot change a valid checkpoint path. |
+| `tools.lucas_point_source_census.x__fingerprint_polygon_inputs__mutmut_18` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__fingerprint_polygon_inputs__mutmut_21` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__fingerprint_polygon_inputs__mutmut_22` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__fingerprint_polygon_inputs__mutmut_27` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__fingerprint_polygon_inputs__mutmut_30` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__fingerprint_polygon_inputs__mutmut_31` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__load_or_create_candidate_partition__mutmut_28` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__load_or_create_candidate_partition__mutmut_31` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__load_or_create_candidate_partition__mutmut_32` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__prepare_lucas_asset__mutmut_5` | Python resolves these codec names case-insensitively; the resulting UTF-8/ASCII bytes and decoded text are unchanged. |
+| `tools.lucas_point_source_census.x__read_checkpoint__mutmut_6` | Python resolves these codec names case-insensitively; the resulting UTF-8/ASCII bytes and decoded text are unchanged. |
+| `tools.lucas_point_source_census.x__read_checkpoint__mutmut_8` | This only removes the checkpoint path from validation diagnostics; schema, identity, result type, and payload-digest checks are unchanged. |
+| `tools.lucas_point_source_census.x__read_polygon_region__mutmut_26` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__read_polygon_region__mutmut_27` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__read_polygon_region__mutmut_28` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__read_polygon_region__mutmut_29` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__record_polygon__mutmut_4` | Conflicting geometry still raises `ValueError`; the mutant only loses the polygon ID from the error message. |
+| `tools.lucas_point_source_census.x__region_paths__mutmut_40` | The affected pinned geometry or label path template contains no `{stream}` placeholder; stream-specific source paths use separate text/label templates. The resolved path is unchanged for the configured pools. |
+| `tools.lucas_point_source_census.x__region_paths__mutmut_59` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__region_paths__mutmut_8` | The affected pinned geometry or label path template contains no `{stream}` placeholder; stream-specific source paths use separate text/label templates. The resolved path is unchanged for the configured pools. |
+| `tools.lucas_point_source_census.x__region_polygon_ids__mutmut_20` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__region_polygon_ids__mutmut_24` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__region_polygon_ids__mutmut_25` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__region_polygon_ids__mutmut_26` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__region_polygon_ids__mutmut_27` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__reject_mixed_snapshot_options__mutmut_4` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__reject_mixed_snapshot_options__mutmut_5` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__reject_mixed_snapshot_options__mutmut_6` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__require_single_snapshot_source__mutmut_7` | Only diagnostic wording or capitalization changes; acceptance, rejection, returned values, and exception type remain unchanged. |
+| `tools.lucas_point_source_census.x__require_single_snapshot_source__mutmut_8` | Only diagnostic wording or capitalization changes; acceptance, rejection, returned values, and exception type remain unchanged. |
+| `tools.lucas_point_source_census.x__require_single_snapshot_source__mutmut_9` | Only diagnostic wording or capitalization changes; acceptance, rejection, returned values, and exception type remain unchanged. |
+| `tools.lucas_point_source_census.x__selected_regions__mutmut_20` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__selected_stream_names__mutmut_11` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_10` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_11` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_2` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_3` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_4` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_6` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_7` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_8` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_all_source_arguments__mutmut_9` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_cli_args__mutmut_1` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_cli_paths__mutmut_19` | Only diagnostic wording or capitalization changes; acceptance, rejection, returned values, and exception type remain unchanged. |
+| `tools.lucas_point_source_census.x__validate_cli_paths__mutmut_23` | Only diagnostic wording or capitalization changes; acceptance, rejection, returned values, and exception type remain unchanged. |
+| `tools.lucas_point_source_census.x__validate_cli_paths__mutmut_24` | Only diagnostic wording or capitalization changes; acceptance, rejection, returned values, and exception type remain unchanged. |
+| `tools.lucas_point_source_census.x__validate_seed__mutmut_4` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validate_separate_path__mutmut_2` | `Path.resolve(strict=None)` follows the same non-strict resolution path as `strict=False`; containment checks and accepted paths are unchanged. |
+| `tools.lucas_point_source_census.x__validate_separate_path__mutmut_5` | `Path.resolve(strict=None)` follows the same non-strict resolution path as `strict=False`; containment checks and accepted paths are unchanged. |
+| `tools.lucas_point_source_census.x__validate_target_per_label__mutmut_7` | Only validation diagnostic wording or capitalization changes; the same rejection branch and exception/CLI exit behavior remain. |
+| `tools.lucas_point_source_census.x__validated_checkpoint_result__mutmut_15` | This only removes the checkpoint path from validation diagnostics; schema, identity, result type, and payload-digest checks are unchanged. |
+| `tools.lucas_point_source_census.x__validated_checkpoint_result__mutmut_2` | This only removes the checkpoint path from validation diagnostics; schema, identity, result type, and payload-digest checks are unchanged. |
+| `tools.lucas_point_source_census.x__verify_candidate_geometry_signatures__mutmut_11` | The path list starts with exactly one geometry entry, followed only by text and label entries; after the first non-geometry role, `continue` and `break` behave identically. |
+| `tools.lucas_point_source_census.x__verify_candidate_geometry_signatures__mutmut_16` | Only diagnostic wording or capitalization changes; acceptance, rejection, returned values, and exception type remain unchanged. |
+| `tools.lucas_point_source_census.x__verify_candidate_geometry_signatures__mutmut_3` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__verify_candidate_geometry_signatures__mutmut_6` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__verify_candidate_geometry_signatures__mutmut_7` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__verify_file_signatures__mutmut_3` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__verify_file_signatures__mutmut_6` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__verify_file_signatures__mutmut_7` | Both sides of this zip are constructed from the same input path/fingerprint sequence, so their lengths match by construction; changing or removing `strict=True` yields the same pairs. |
+| `tools.lucas_point_source_census.x__write_checkpoint__mutmut_20` | `ensure_ascii=None` and `ensure_ascii=False` select the same encoder in Python, so serialized bytes are unchanged. |
+| `tools.lucas_point_source_census.x__write_checkpoint__mutmut_37` | Python resolves these codec names case-insensitively; the resulting UTF-8/ASCII bytes and decoded text are unchanged. |
+| `tools.lucas_point_source_census.x__write_new_json__mutmut_14` | Python resolves these codec names case-insensitively; the resulting UTF-8/ASCII bytes and decoded text are unchanged. |
+| `tools.lucas_point_source_census.x__write_new_json__mutmut_18` | `ensure_ascii=None` and `ensure_ascii=False` select the same encoder in Python, so serialized bytes are unchanged. |
 
 ## Historical preserved run status
 

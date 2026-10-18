@@ -7,6 +7,12 @@ Each source/reference pair still targets 1,000 sentence instances, split 500
 existing source-relevance `yes` and 500 `no`. Do not pad a shortfall, change a
 label, or loosen a reference rule to force that quota.
 
+For the current bounded LUCAS point evaluation, the user authorized three
+cohorts: Description at 314 `yes` + 314 `no`, Website at 500 + 500, and the
+combined Wikipedia/Wikivoyage source at 500 + 500. This authorization supersedes
+the all-nine sampling gate for those three cohorts only. It does not provide
+results or clear the separate model-output and train/evaluation leakage checks.
+
 ## Three-source LUCAS availability
 
 The tracked `tools/lucas_source_pool_census.py` covers
@@ -69,9 +75,12 @@ The Europe receipt is git-ignored at
 `data/quality/lucas-description-europe-census.jsonl`. Its per-region counts
 reconcile, but the checkpoint driver used for that run is also git-ignored.
 The tracked source-pool census now supports the three source schemas across
-the configured region scope and can read either Atlas outputs or exact-revision
-HF snapshots already in the local cache. The direct adapter has synthetic
-tests, but no complete tracked spatial run has reproduced the receipt. Treat
+the configured region scope and can read either Atlas outputs or local
+directories whose HF-cache-shaped paths match the configured repository and
+revision. This path check does not verify HF cache metadata or authenticate file
+bytes against a trusted Hub commit manifest. The direct adapter has
+synthetic tests, but no complete tracked spatial run has reproduced the receipt.
+Treat
 the Europe aggregate as recorded evidence, not an independently reproducible
 tracked run; this provenance gate remains open.
 
@@ -141,8 +150,10 @@ Only 4 `yes` and 1 `no` joined to eligible polygons.
 
 The executable paths are `tools/lucas_description_census.py` for the bounded
 Description run and `tools/lucas_source_pool_census.py` for the three-source
-census. Its direct mode reads only exact-pinned snapshots already present in
-the local HF cache; it does not download source files or read sentence text.
+census. Its direct mode reads local directories with HF-cache-shaped paths
+matching the configured repository and revision names. It does not verify HF
+cache metadata or authenticate file bytes against a trusted Hub commit manifest,
+download source files, or read sentence text.
 The compact Austria and Belgium receipt remains local and git-ignored.
 
 ## Remaining source/reference pairs
@@ -171,17 +182,52 @@ Wiki row groups just to fill this gap.
   covers all configured source schemas and supports direct local HF cache
   snapshots, but no full spatial run has been reproduced from that tracked
   path.
-- **Sampling:** H3 resolution 3, seed 42, maximum 20 instances per cell applies
-  only after all nine eligible yes/no pools are measured. No sampling has run.
-- **Compute:** no inference or Grid5000 allocation has started. Complete all
-  relevant data manifests and the live Grid5000 usage-policy check before any
-  inference request. No external outreach or allocation was made.
+- **Sampling:** H3 resolution 3, seed 42, and a maximum of 20 instances per
+  cell apply to the authorized LUCAS cohorts above. Description uses the
+  observed balanced target of 314 per label; Website and combined Wiki target
+  500 per label. The Wiki streams must be deduplicated by `sentence_id` and
+  sampled under one shared quota and cell cap. Report any observed shortfall.
+- **Counts-only compute:** no census output is included with this PR. Any future
+  run requires explicit authorization, pinned inputs and code, and live policy,
+  capacity, and storage checks. A counts-only result would not clear the
+  remaining cohort gates.
+- **Bounded LUCAS inference:** `tools/lucas_main_category_inference.py` and
+  `scripts/run_lucas_main_category_grid5000.sh` implement the separate
+  main-category task. The target is `target_label` at `main_category`, with
+  exactly one final choice in the form
+  `Final LUCAS main_category: CODE` after `</think>`; relevance is sampling
+  metadata only. The pinned model is
+  `LiquidAI/LFM2.5-2.6B@654f9463ce32b05d0429d76fe1f580b27d4c1ac0`, using BF16,
+  greedy decoding, seed 0, batches of 16, and at most 4096 new tokens. Synthetic
+  tests cover the parser, source adapters, malformed revision rejection,
+  runtime contract, checkpoint privacy, and launcher syntax. They do not
+  substitute for hosted CI or a completed inference run.
+- **Source-join preflight:** set `LUCAS_VALIDATE_SOURCES_ONLY=1` when running
+  `scripts/run_lucas_main_category_grid5000.sh` inside a CPU-only OAR allocation.
+  The mode validates all three pinned cohort manifests and resolves every
+  selected text join without loading the model or persisting resolved sentences.
+  It uses the pinned Website `website_sentences` and
+  `contact_website_sentences` arrays and checks their counts against the source
+  metadata before matching the zero-based sentence indices.
+- **Inference provenance:** the launcher requires the audited runtime project
+  and lock hashes, validates Python/PyTorch/CUDA/Transformers/Hub/PyArrow pins
+  and GPU capability, and writes job-specific runtime metadata. Downloaded
+  source Parquet, resolved sentence text, and model cache stay in
+  allocation-local scratch. The runner rejects resolved-text and Hub-cache
+  paths that overlap the `output/publish` tree, including symlinked paths.
+  Checkpoints and publication artifacts omit source text and raw completions.
+  No LUCAS inference or score publication has been
+  performed by this change. Review train/evaluation overlap before interpreting
+  any future score. The source-label generation prompt remains a separate
+  artifact. Run the live Grid5000 usage-policy and capacity checks before a new
+  allocation. No external outreach was made.
 
-Next, reproduce the source-pool census from exact-pinned local source and label
-snapshots without disturbing Atlas, complete the missing Wikidata/Wikipedia
-streams, freeze the EUNIS threshold and available assignments, obtain the
-missing WorldCover assignments, and report exact per-pair yes/no pools before
-sampling or compute.
+The bounded three-cohort work may proceed on the verified LUCAS checkpoints
+under the explicit authorization above, without disturbing Atlas. The broader
+nine-cohort evaluation still requires completing missing Wiki coverage,
+freezing the EUNIS threshold and available assignments, obtaining the missing
+WorldCover assignments, and reporting exact per-pair pools. No authorization
+for those additional cohorts is implied.
 
 The pinned binary classifier is `place-relevance-v2`, run
 `bc1fdc83579d6793f44d`, public model revision

@@ -6,9 +6,10 @@ polygon-area method or its strict 80% coverage threshold.
 The [LUCAS Copernicus 2022 protocol paper](https://essd.copernicus.org/articles/16/5723/2024/)
 states that the surveyor records the Copernicus class at the position reached;
 that position may differ from the theoretical LUCAS sample point. The point
-reader therefore selects only `survey_gps_lat`, `survey_gps_long`, and the
-Copernicus module class `surveycprnlc`. It does not load `point_lat`,
-`point_long`, or `survey_lc1` into the point method.
+reader uses `survey_gps_lat`, `survey_gps_long`, and the Copernicus module class
+`surveycprnlc` as coordinate and class evidence. It also reads observation
+identifiers and quality fields for the filters below. It does not load
+`point_lat`, `point_long`, or `survey_lc1` into the point method.
 
 ## Frozen observation policy
 
@@ -42,13 +43,22 @@ counted once and anchored to the lexically smallest eligible polygon ID. The
 sampler keeps the selected sentence IDs grouped by anchor polygon for clustered
 analysis and reports both sentence and polygon counts.
 
-The sampler targets 500 `yes` and 500 `no` sentence instances. It projects
-representative points of eligible source polygons to EPSG:3035, spreads picks
-round-robin over occupied 50 km cells, and caps the combined sample at 20
-instances per cell. It uses seed 42 by default. If a quota cannot be met under
-the observed pool and geographic cap, the report exposes that shortfall; it
-does not widen eligibility or change labels. Sentence text and sample manifests
-remain local and are not committed.
+The Wiki source has Wikipedia and Wikivoyage input streams. Coalesce each
+stream's regional partitions, then merge both streams by their shared
+`sentence_id` key before sampling. Duplicate keys with different labels fail
+the run; matching keys union their polygon links and retain all stream
+provenance. The configured quota and H3 cell cap therefore apply to the combined
+Wiki cohort, while the report keeps per-stream counts and selected-row
+provenance.
+
+The sampler targets 500 `yes` and 500 `no` sentence instances. It assigns each
+eligible anchor point directly to an H3 resolution-3 cell, ranks stable
+source-qualified sentence keys with seed 42, and spreads picks round-robin over
+occupied cells. The combined sample is capped at 20 instances per cell. Reports
+record the H3 binding version, resolution, cell ID, and anchor polygon. If a quota
+cannot be met under the observed pool and geographic cap, the report exposes
+that shortfall; it does not widen eligibility or change labels. Sentence text
+and sample manifests remain local and are not committed.
 
 The point census and sample utilities are read-only. They do not start
 inference, change source datasets, or claim a full-corpus result until a complete

@@ -7,15 +7,23 @@ import math
 from collections import Counter, defaultdict, deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from importlib.metadata import version
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol, TypeAlias
 
-from pyproj import Transformer
+import h3
 
-from osm_polygon_lucas.point_coverage import PointCensus
-
-_CELL_TRANSFORMER = Transformer.from_crs("OGC:CRS84", "EPSG:3035", always_xy=True)
+H3CellId: TypeAlias = str
+H3_VERSION = version("h3")
+_MAX_H3_RESOLUTION = 15
 _LABELS = ("yes", "no")
+
+
+class PointAnchorIndex(Protocol):
+    """The sampler's only dependency on the spatial census result."""
+
+    @property
+    def eligible_polygon_anchors(self) -> Mapping[str, tuple[float, float]]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +31,7 @@ class PointSentenceSampleEntry:
     sentence_id: str
     relevance: str
     anchor_polygon_id: str
-    cell: tuple[int, int]
+    cell: H3CellId
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +39,8 @@ class PointSentenceSample:
     source: str
     seed: int
     target_per_label: int
-    cell_size_metres: float
+    h3_resolution: int
+    h3_version: str
     max_per_cell: int
     eligible_by_label: Mapping[str, int]
     selected_by_label: Mapping[str, int]
@@ -52,7 +61,7 @@ class _Candidate:
     sentence_id: str
     relevance: str
     polygon_id: str
-    cell: tuple[int, int]
+    cell: H3CellId
     rank: str
 
 
@@ -69,20 +78,20 @@ class _QuotaNetwork:
     source: int
     sink: int
     label_nodes: dict[str, int]
-    cell_nodes: dict[tuple[int, int], int]
+    cell_nodes: dict[H3CellId, int]
     source_edges: dict[str, int]
-    allocation_edges: dict[str, dict[tuple[int, int], int]]
-    cell_sink_edges: dict[tuple[int, int], int]
+    allocation_edges: dict[str, dict[H3CellId, int]]
+    cell_sink_edges: dict[H3CellId, int]
 
 
 def sample_point_sentence_instances(
     candidates: Iterable[Mapping[str, Any]],
-    point_census: PointCensus,
+    point_census: PointAnchorIndex,
     *,
     source: str,
     target_per_label: int = 500,
     seed: int = 42,
-    cell_size_metres: float = 50_000,
+    h3_resolution: int = 3,
     max_per_cell: int = 20,
 ) -> PointSentenceSample:
     """Select a balanced, geographically spread sample without sentence text.
@@ -92,7 +101,7 @@ def sample_point_sentence_instances(
     polygon key. Repeated sentences remain grouped by polygon in the returned
     manifest so downstream summaries can use the polygon as the cluster.
     """
-    _validate_sampling_options(source, target_per_label, cell_size_metres, max_per_cell)
+    _validate_sampling_options(source, target_per_label, h3_resolution, max_per_cell)
     anchors = point_census.eligible_polygon_anchors
     unique_candidates, repeated_rows, non_binary = _candidate_rows(candidates)
     eligible, eligible_polygon_ids, multi_polygon_sentences = _eligible_candidates(
@@ -100,7 +109,7 @@ def sample_point_sentence_instances(
         anchors,
         source=source,
         seed=seed,
-        cell_size_metres=cell_size_metres,
+        h3_resolution=h3_resolution,
     )
     selected, occupied_cells = _select_candidates(
         eligible,
@@ -113,7 +122,7 @@ def sample_point_sentence_instances(
         source=source,
         seed=seed,
         target_per_label=target_per_label,
-        cell_size_metres=cell_size_metres,
+        h3_resolution=h3_resolution,
         max_per_cell=max_per_cell,
         eligible=eligible,
         eligible_polygon_ids=eligible_polygon_ids,
@@ -131,7 +140,7 @@ def _eligible_candidates(
     *,
     source: str,
     seed: int,
-    cell_size_metres: float,
+    h3_resolution: int,
 ) -> tuple[dict[str, list[_Candidate]], set[str], int]:
     eligible: dict[str, list[_Candidate]] = {label: [] for label in _LABELS}
     eligible_polygon_ids: set[str] = set()
@@ -145,11 +154,7 @@ def _eligible_candidates(
             multi_polygon_sentences += 1
         anchor_id = linked[0]
         longitude, latitude = anchors[anchor_id]
-        easting, northing = _project(longitude, latitude)
-        cell = (
-            math.floor(easting / cell_size_metres),
-            math.floor(northing / cell_size_metres),
-        )
+        cell = _h3_cell(longitude, latitude, h3_resolution)
         eligible[relevance].append(
             _Candidate(
                 sentence_id=sentence_id,
@@ -167,7 +172,7 @@ def _build_sample(
     source: str,
     seed: int,
     target_per_label: int,
-    cell_size_metres: float,
+    h3_resolution: int,
     max_per_cell: int,
     eligible: Mapping[str, list[_Candidate]],
     eligible_polygon_ids: set[str],
@@ -186,7 +191,8 @@ def _build_sample(
         source=source,
         seed=seed,
         target_per_label=target_per_label,
-        cell_size_metres=cell_size_metres,
+        h3_resolution=h3_resolution,
+        h3_version=H3_VERSION,
         max_per_cell=max_per_cell,
         eligible_by_label=MappingProxyType(eligible_counts),
         selected_by_label=MappingProxyType(selected_counts_by_label),
@@ -229,13 +235,13 @@ def _label_counts(counts: Counter[str]) -> dict[str, int]:
 
 
 def _validate_sampling_options(
-    source: str, target_per_label: int, cell_size_metres: float, max_per_cell: int
+    source: str, target_per_label: int, h3_resolution: int, max_per_cell: int
 ) -> None:
     if not isinstance(source, str) or not source:
         raise ValueError("source must be non-empty text")
     _validate_positive_integer(target_per_label, "target_per_label")
     _validate_positive_integer(max_per_cell, "max_per_cell")
-    _validate_cell_size(cell_size_metres)
+    _validate_h3_resolution(h3_resolution)
 
 
 def _validate_positive_integer(value: object, name: str) -> None:
@@ -243,11 +249,13 @@ def _validate_positive_integer(value: object, name: str) -> None:
         raise ValueError(f"{name} must be a positive integer")
 
 
-def _validate_cell_size(value: object) -> None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise ValueError("cell_size_metres must be a positive finite number")
-    if not math.isfinite(value) or value <= 0:
-        raise ValueError("cell_size_metres must be a positive finite number")
+def _validate_h3_resolution(value: object) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value <= _MAX_H3_RESOLUTION
+    ):
+        raise ValueError("h3_resolution must be an integer from 0 through 15")
 
 
 def _candidate_rows(
@@ -313,16 +321,20 @@ def _remember_candidate(
     return 1
 
 
-def _project(longitude: float, latitude: float) -> tuple[float, float]:
+def _h3_cell(longitude: float, latitude: float, resolution: int) -> H3CellId:
+    if (
+        not math.isfinite(longitude)
+        or not math.isfinite(latitude)
+        or not -180 <= longitude <= 180
+        or not -90 <= latitude <= 90
+    ):
+        raise ValueError("eligible polygon anchor is outside CRS84 bounds")
     try:
-        easting, northing = _CELL_TRANSFORMER.transform(longitude, latitude)
+        return h3.latlng_to_cell(latitude, longitude, resolution)
     except Exception as exc:
         raise ValueError(
-            "eligible polygon anchor cannot be projected to EPSG:3035"
+            "eligible polygon anchor cannot be assigned to an H3 cell"
         ) from exc
-    if not math.isfinite(easting) or not math.isfinite(northing):
-        raise ValueError("eligible polygon anchor projects to non-finite coordinates")
-    return easting, northing
 
 
 def _rank(seed: int, source: str, sentence_id: str) -> str:
@@ -350,15 +362,15 @@ def _select_candidates(
 def _candidate_queues(
     eligible: Mapping[str, list[_Candidate]], seed: int, source: str
 ) -> tuple[
-    dict[str, list[tuple[int, int]]],
-    dict[str, dict[tuple[int, int], deque[_Candidate]]],
-    set[tuple[int, int]],
+    dict[str, list[H3CellId]],
+    dict[str, dict[H3CellId, deque[_Candidate]]],
+    set[H3CellId],
 ]:
-    cells_by_label: dict[str, list[tuple[int, int]]] = {}
-    queues: dict[str, dict[tuple[int, int], deque[_Candidate]]] = {}
-    occupied: set[tuple[int, int]] = set()
+    cells_by_label: dict[str, list[H3CellId]] = {}
+    queues: dict[str, dict[H3CellId, deque[_Candidate]]] = {}
+    occupied: set[H3CellId] = set()
     for label in _LABELS:
-        grouped: dict[tuple[int, int], list[_Candidate]] = defaultdict(list)
+        grouped: dict[H3CellId, list[_Candidate]] = defaultdict(list)
         for candidate in eligible[label]:
             grouped[candidate.cell].append(candidate)
             occupied.add(candidate.cell)
@@ -368,14 +380,14 @@ def _candidate_queues(
         }
         cells_by_label[label] = sorted(
             grouped,
-            key=lambda cell: _rank(seed, source, f"cell:{cell[0]}:{cell[1]}"),
+            key=lambda cell: _rank(seed, source, f"cell:{cell}"),
         )
     return cells_by_label, queues, occupied
 
 
 def _round_robin_select(
-    cells_by_label: Mapping[str, list[tuple[int, int]]],
-    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    cells_by_label: Mapping[str, list[H3CellId]],
+    queues: Mapping[str, dict[H3CellId, deque[_Candidate]]],
     *,
     target_per_label: int,
     max_per_cell: int,
@@ -403,12 +415,12 @@ def _round_robin_select(
 
 
 def _allocate_cell_counts(
-    cells_by_label: Mapping[str, list[tuple[int, int]]],
-    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    cells_by_label: Mapping[str, list[H3CellId]],
+    queues: Mapping[str, dict[H3CellId, deque[_Candidate]]],
     *,
     target_per_label: int,
     max_per_cell: int,
-) -> dict[str, dict[tuple[int, int], int]]:
+) -> dict[str, dict[H3CellId, int]]:
     limits = {label: target_per_label for label in _LABELS}
     greedy_allocations = _round_robin_allocation(
         cells_by_label,
@@ -466,19 +478,19 @@ def _allocate_cell_counts(
 
 
 def _round_robin_allocation(
-    cells_by_label: Mapping[str, list[tuple[int, int]]],
-    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    cells_by_label: Mapping[str, list[H3CellId]],
+    queues: Mapping[str, dict[H3CellId, deque[_Candidate]]],
     *,
     target_per_label: int,
     max_per_cell: int,
-    initial_allocations: Mapping[str, Mapping[tuple[int, int], int]] | None = None,
-) -> dict[str, dict[tuple[int, int], int]]:
+    initial_allocations: Mapping[str, Mapping[H3CellId, int]] | None = None,
+) -> dict[str, dict[H3CellId, int]]:
     initial = initial_allocations or {}
     allocations = {label: Counter(initial.get(label, {})) for label in _LABELS}
     selected_counts = Counter(
         {label: sum(allocations[label].values()) for label in _LABELS}
     )
-    cell_counts: Counter[tuple[int, int]] = Counter()
+    cell_counts: Counter[H3CellId] = Counter()
     for label in _LABELS:
         cell_counts.update(allocations[label])
     cursors = {label: 0 for label in _LABELS}
@@ -499,11 +511,11 @@ def _round_robin_allocation(
 
 
 def _allocate_round_robin_round(
-    cells_by_label: Mapping[str, list[tuple[int, int]]],
-    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
-    allocations: dict[str, Counter[tuple[int, int]]],
+    cells_by_label: Mapping[str, list[H3CellId]],
+    queues: Mapping[str, dict[H3CellId, deque[_Candidate]]],
+    allocations: dict[str, Counter[H3CellId]],
     selected_counts: Counter[str],
-    cell_counts: Counter[tuple[int, int]],
+    cell_counts: Counter[H3CellId],
     cursors: dict[str, int],
     *,
     target_per_label: int,
@@ -537,13 +549,13 @@ def _needs_samples(selected_counts: Counter[str], target_per_label: int) -> bool
 
 def _next_available_cell(
     label: str,
-    cells_by_label: Mapping[str, list[tuple[int, int]]],
-    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
-    allocations: Mapping[str, Counter[tuple[int, int]]],
-    cell_counts: Counter[tuple[int, int]],
+    cells_by_label: Mapping[str, list[H3CellId]],
+    queues: Mapping[str, dict[H3CellId, deque[_Candidate]]],
+    allocations: Mapping[str, Counter[H3CellId]],
+    cell_counts: Counter[H3CellId],
     cursors: dict[str, int],
     max_per_cell: int,
-) -> tuple[int, int] | None:
+) -> H3CellId | None:
     cells = cells_by_label[label]
     if not cells:
         return None
@@ -560,8 +572,8 @@ def _next_available_cell(
 
 
 def _build_quota_network(
-    cells_by_label: Mapping[str, list[tuple[int, int]]],
-    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    cells_by_label: Mapping[str, list[H3CellId]],
+    queues: Mapping[str, dict[H3CellId, deque[_Candidate]]],
     label_limits: Mapping[str, int],
     max_per_cell: int,
 ) -> _QuotaNetwork:
@@ -574,10 +586,8 @@ def _build_quota_network(
     sink = len(label_nodes) + len(cell_nodes) + 1
     graph: list[list[_FlowEdge]] = [[] for _ in range(sink + 1)]
     source_edges: dict[str, int] = {}
-    allocation_edges: dict[str, dict[tuple[int, int], int]] = {
-        label: {} for label in _LABELS
-    }
-    cell_sink_edges: dict[tuple[int, int], int] = {}
+    allocation_edges: dict[str, dict[H3CellId, int]] = {label: {} for label in _LABELS}
+    cell_sink_edges: dict[H3CellId, int] = {}
     for label in _LABELS:
         source_edges[label] = _add_flow_edge(
             graph, source, label_nodes[label], label_limits[label]
@@ -605,8 +615,8 @@ def _build_quota_network(
 
 
 def _maximum_common_quota(
-    cells_by_label: Mapping[str, list[tuple[int, int]]],
-    queues: Mapping[str, dict[tuple[int, int], deque[_Candidate]]],
+    cells_by_label: Mapping[str, list[H3CellId]],
+    queues: Mapping[str, dict[H3CellId, deque[_Candidate]]],
     *,
     target_per_label: int,
     max_per_cell: int,
@@ -631,7 +641,7 @@ def _maximum_common_quota(
 
 def _seed_quota_network(
     network: _QuotaNetwork,
-    allocations: Mapping[str, Mapping[tuple[int, int], int]],
+    allocations: Mapping[str, Mapping[H3CellId, int]],
 ) -> None:
     for label in _LABELS:
         _apply_initial_flow(
@@ -733,10 +743,8 @@ def _push_flow(
 
 def _read_cell_allocations(
     network: _QuotaNetwork,
-) -> dict[str, dict[tuple[int, int], int]]:
-    allocations: dict[str, dict[tuple[int, int], int]] = {
-        label: {} for label in _LABELS
-    }
+) -> dict[str, dict[H3CellId, int]]:
+    allocations: dict[str, dict[H3CellId, int]] = {label: {} for label in _LABELS}
     for label in _LABELS:
         node = network.label_nodes[label]
         for cell, edge_index in network.allocation_edges[label].items():

@@ -2,9 +2,12 @@ from collections import Counter, deque
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from shapely.geometry import box
 
 from osm_polygon_lucas import PointObservation, SourcePolygon, evaluate_point_census
+from tools.lucas_point_census_domain import PointIndex
 from tools.lucas_point_sampling import (
     _Candidate,
     _round_robin_select,
@@ -82,6 +85,24 @@ def test_balanced_sample_is_deterministic_and_groups_sentences_by_polygon():
     assert "yes-3" in first.selected_sentence_ids_by_polygon.get("polygon-a", ())
 
 
+def test_default_sampler_uses_the_pinned_h3_grid():
+    sample = sample_point_sentence_instances(
+        [
+            {"sentence_id": "yes-1", "status": "yes", "polygon_ids": ["anchor"]},
+            {"sentence_id": "no-1", "status": "no", "polygon_ids": ["anchor"]},
+        ],
+        PointIndex({"anchor": (-122.388903, 37.769377)}),
+        source="regression",
+        target_per_label=1,
+    )
+
+    assert sample.seed == 42
+    assert sample.h3_resolution == 3
+    assert sample.h3_version == "4.5.0"
+    assert sample.max_per_cell == 20
+    assert {entry.cell for entry in sample.selected} == {"832830fffffffff"}
+
+
 def test_geographic_cell_cap_reports_a_real_class_shortfall():
     sample = sample_point_sentence_instances(
         [
@@ -101,8 +122,8 @@ def test_geographic_cell_cap_reports_a_real_class_shortfall():
 
 
 def test_feasible_quotas_reassign_a_shared_cell_to_avoid_shortfall():
-    cell_a = (0, 0)
-    cell_b = (1, 0)
+    cell_a = "cell-a"
+    cell_b = "cell-b"
     yes_a = _Candidate("yes-a", "yes", "polygon-a", cell_a, "a")
     yes_b = _Candidate("yes-b", "yes", "polygon-b", cell_b, "b")
     no_a = _Candidate("no-a", "no", "polygon-a", cell_a, "c")
@@ -123,8 +144,8 @@ def test_feasible_quotas_reassign_a_shared_cell_to_avoid_shortfall():
 
 
 def test_infeasible_full_quotas_preserve_the_largest_balanced_sample():
-    cell_a = (0, 0)
-    cell_b = (1, 0)
+    cell_a = "cell-a"
+    cell_b = "cell-b"
     selected = _round_robin_select(
         {"yes": [cell_a, cell_b], "no": [cell_a]},
         {
@@ -142,16 +163,16 @@ def test_infeasible_full_quotas_preserve_the_largest_balanced_sample():
 
 
 def test_feasible_sample_remains_round_robin_across_occupied_cells():
-    cells = [(index, 0) for index in range(100)]
+    cells = [f"cell-{index}" for index in range(100)]
     queues = {
         label: {
             cell: deque(
                 _Candidate(
-                    f"{label}-{cell[0]}-{item}",
+                    f"{label}-{cell}-{item}",
                     label,
-                    f"polygon-{cell[0]}",
+                    f"polygon-{cell}",
                     cell,
-                    f"{label}-{cell[0]}-{item}",
+                    f"{label}-{cell}-{item}",
                 )
                 for item in range(20)
             )
@@ -171,17 +192,17 @@ def test_feasible_sample_remains_round_robin_across_occupied_cells():
 
 
 def test_partial_sample_spreads_extra_quota_across_remaining_cells():
-    cell_a, cell_b, cell_c = (0, 0), (1, 0), (2, 0)
+    cell_a, cell_b, cell_c = "cell-a", "cell-b", "cell-c"
     cells = [cell_a, cell_b, cell_c]
     queues = {
         "yes": {
             cell: deque(
                 _Candidate(
-                    f"yes-{cell[0]}-{item}",
+                    f"yes-{cell}-{item}",
                     "yes",
-                    f"polygon-{cell[0]}",
+                    f"polygon-{cell}",
                     cell,
-                    f"yes-{cell[0]}-{item}",
+                    f"yes-{cell}-{item}",
                 )
                 for item in range(20)
             )
@@ -224,7 +245,10 @@ def test_duplicate_sentence_id_with_different_source_data_is_rejected():
     [
         ({"source": ""}, "source"),
         ({"target_per_label": 0}, "target_per_label"),
-        ({"cell_size_metres": 0}, "cell_size_metres"),
+        ({"h3_resolution": -1}, "h3_resolution"),
+        ({"h3_resolution": 16}, "h3_resolution"),
+        ({"h3_resolution": 3.0}, "h3_resolution"),
+        ({"h3_resolution": True}, "h3_resolution"),
         ({"max_per_cell": 0}, "max_per_cell"),
     ],
 )
@@ -242,3 +266,53 @@ def test_empty_candidate_set_reports_full_shortfall():
     assert sample.eligible_by_label == {"yes": 0, "no": 0}
     assert sample.selected_by_label == {"yes": 0, "no": 0}
     assert sample.shortfall_by_label == {"yes": 3, "no": 3}
+
+
+@settings(max_examples=60, derandomize=True, deadline=None)
+@given(
+    yes_count=st.integers(min_value=0, max_value=18),
+    no_count=st.integers(min_value=0, max_value=18),
+    target=st.integers(min_value=1, max_value=12),
+    cell_capacity=st.integers(min_value=1, max_value=10),
+)
+def test_sampler_preserves_caps_and_is_input_order_invariant(
+    yes_count, no_count, target, cell_capacity
+):
+    candidates = [
+        {
+            "sentence_id": f"yes-{index}",
+            "status": "yes",
+            "polygon_ids": ["polygon-a"],
+        }
+        for index in range(yes_count)
+    ] + [
+        {
+            "sentence_id": f"no-{index}",
+            "status": "no",
+            "polygon_ids": ["polygon-a"],
+        }
+        for index in range(no_count)
+    ]
+    anchors = PointIndex({"polygon-a": (9.05, 55.05)})
+    options = {
+        "source": "property-test",
+        "target_per_label": target,
+        "seed": 19,
+        "h3_resolution": 3,
+        "max_per_cell": cell_capacity,
+    }
+
+    sample = sample_point_sentence_instances(candidates, anchors, **options)
+    reversed_sample = sample_point_sentence_instances(
+        list(reversed(candidates)), anchors, **options
+    )
+
+    assert sample == reversed_sample
+    selected_ids = [entry.sentence_id for entry in sample.selected]
+    assert len(selected_ids) == len(set(selected_ids))
+    assert all(entry.relevance in {"yes", "no"} for entry in sample.selected)
+    assert all(count <= target for count in sample.selected_by_label.values())
+    assert (
+        max(Counter(entry.cell for entry in sample.selected).values(), default=0)
+        <= cell_capacity
+    )

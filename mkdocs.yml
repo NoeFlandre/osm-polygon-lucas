@@ -9,7 +9,9 @@ nav:
       - GeoPackage loader: adr/0002-lucas-gpkg-loader.md
       - CLI report: adr/0003-cli-report.md
   - Quality:
+      - Code quality gates: quality/code-quality-gates.md
       - Cohort method: quality/cohort-method.md
+      - Supplemental point validation: quality/lucas-point-method.md
       - Sentence evaluation readiness: quality/sentence-evaluation-readiness.md
       - Mutation environment: quality/mutation-environment.md
       - Mutation triage: quality/mutation-triage.md

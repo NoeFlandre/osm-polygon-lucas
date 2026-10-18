@@ -1,4 +1,4 @@
-"""Read-only LUCAS census adapter for locally cached pinned source snapshots."""
+"""Read-only LUCAS census adapter for local HF-cache-shaped source directories."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from tools import lucas_source_pool_census as census
 
 
 def _validate_snapshot_root(path: Path, repository: str, revision: str) -> Path:
-    """Require an exact HF Hub cache snapshot; this reader never downloads."""
+    """Check HF-cache-shaped path components only; never verify Hub provenance."""
     root = path.expanduser()
     cache_name = f"datasets--{repository.replace('/', '--')}"
     if (
@@ -31,8 +31,9 @@ def _validate_snapshot_root(path: Path, repository: str, revision: str) -> Path:
         or root.parent.name != "snapshots"
         or root.parent.parent.name != cache_name
     ):
+        expected = f"{cache_name}/snapshots/{revision}"
         raise ValueError(
-            f"snapshot must be {cache_name}/snapshots/{revision} for the pinned repo"
+            f"source path must match {expected} for the configured repo and revision"
         )
     return root
 
@@ -60,7 +61,7 @@ def _snapshot_file(root: Path, template: str, *, region: str, stream: str) -> Pa
         raise ValueError("direct-source path template must stay inside its snapshot")
     path = root.joinpath(*relative.parts)
     if not path.is_file():
-        raise FileNotFoundError(f"pinned source snapshot file is missing: {relative}")
+        raise FileNotFoundError(f"configured source file is missing: {relative}")
     return path
 
 
@@ -76,6 +77,13 @@ def _parquet_row_count(path: Path) -> int:
 
 def _checkpoint_digest(identity: dict[str, Any]) -> str:
     payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _payload_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -96,6 +104,36 @@ def _checkpoint_path(
     return root / stage / f"{name}-{digest[:16]}.json", digest
 
 
+def _input_file_fingerprint(
+    path: Path, *, include_content_hash: bool
+) -> tuple[dict[str, Any], tuple[int, int, int, int, int]]:
+    """Fingerprint a file for checkpoints and return its stability signature."""
+    signature = census._asset_signature(path)
+    fingerprint: dict[str, Any] = {"size_bytes": signature[2]}
+    if include_content_hash:
+        fingerprint["sha256"] = census._file_sha256(path)
+    _require_input_file_signature(path, signature)
+    return fingerprint, signature
+
+
+def _require_input_file_signature(
+    path: Path, expected: tuple[int, int, int, int, int]
+) -> None:
+    if not path.is_file() or census._asset_signature(path) != expected:
+        raise ValueError(f"configured source file changed during the census: {path}")
+
+
+def _complete_source_scope(
+    config: dict[str, Any],
+    source: dict[str, Any],
+    selected_regions: list[str],
+    selected_streams: list[str],
+) -> bool:
+    return set(selected_regions) == set(config["scope"]["regions"]) and set(
+        selected_streams
+    ) == {stream["name"] for stream in source["streams"]}
+
+
 def _read_checkpoint(
     path: Path | None,
     schema: str,
@@ -104,6 +142,8 @@ def _read_checkpoint(
     if path is None or not path.exists():
         return None
     checkpoint = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"invalid checkpoint at {path}")
     if checkpoint.get("checkpoint_schema") != schema:
         raise ValueError(f"unsupported checkpoint schema at {path}")
     if checkpoint.get("identity") != identity:
@@ -111,6 +151,8 @@ def _read_checkpoint(
     result = checkpoint.get("result")
     if not isinstance(result, dict):
         raise ValueError(f"checkpoint result is invalid at {path}")
+    if checkpoint.get("result_sha256") != _payload_sha256(result):
+        raise ValueError(f"checkpoint payload digest mismatch at {path}")
     return result
 
 
@@ -126,6 +168,7 @@ def _write_checkpoint(
     checkpoint = {
         "checkpoint_schema": schema,
         "identity": identity,
+        "result_sha256": _payload_sha256(result),
         "result": result,
     }
     contents = json.dumps(checkpoint, ensure_ascii=False, sort_keys=True) + "\n"
@@ -482,22 +525,28 @@ def _direct_geometry_checkpoint(
     )
     if not polygon_path.is_file():
         raise FileNotFoundError(
-            f"pinned source snapshot file is missing: {polygon_relative}"
+            f"configured source file is missing: {polygon_relative}"
         )
+    polygon_fingerprint, polygon_signature = _input_file_fingerprint(
+        polygon_path, include_content_hash=checkpoint_dir is not None
+    )
     identity = {
         **checkpoint_base,
         "stage": "geometry",
         "region": region,
         "stream": None,
         "polygon_path": polygon_relative,
-        "polygon_size_bytes": polygon_path.stat().st_size,
+        "polygon_size_bytes": polygon_fingerprint["size_bytes"],
         "geometry_encoding": source["geometry_encoding"],
     }
+    if "sha256" in polygon_fingerprint:
+        identity["polygon_sha256"] = polygon_fingerprint["sha256"]
     checkpoint_path, checkpoint_id = _checkpoint_path(
         checkpoint_dir, "geometry", identity
     )
     cached = _read_checkpoint(checkpoint_path, "lucas-direct-geometry/v1", identity)
     if cached is not None:
+        _require_input_file_signature(polygon_path, polygon_signature)
         return checkpoint_path, checkpoint_id, identity, cached, True
 
     geometries, polygon_ids, geometry_exclusions, decisions, polygon_rows = (
@@ -508,6 +557,7 @@ def _direct_geometry_checkpoint(
             source["geometry_encoding"],
         )
     )
+    _require_input_file_signature(polygon_path, polygon_signature)
     if geometries:
         (
             eligible,
@@ -632,6 +682,24 @@ def _direct_stream_result(
     if eligible and not label_available:
         missing_inputs.append(label_relative)
 
+    include_content_hash = checkpoint_dir is not None
+    label_fingerprint: dict[str, Any] | None = None
+    label_signature: tuple[int, int, int, int, int] | None = None
+    if label_available:
+        label_fingerprint, label_signature = _input_file_fingerprint(
+            label_path, include_content_hash=include_content_hash
+        )
+    required_text_files = []
+    required_text_signatures: list[tuple[Path, tuple[int, int, int, int, int]]] = []
+    for _name, path, relative in required_text_paths:
+        if not path.is_file():
+            continue
+        fingerprint, signature = _input_file_fingerprint(
+            path, include_content_hash=include_content_hash
+        )
+        required_text_files.append({"name": relative, **fingerprint})
+        required_text_signatures.append((path, signature))
+
     identity = {
         **checkpoint_base,
         "stage": "labels",
@@ -639,19 +707,23 @@ def _direct_stream_result(
         "stream": stream_name,
         "geometry_checkpoint_id": geometry_checkpoint_id,
         "label_path": label_relative,
-        "label_size_bytes": label_path.stat().st_size if label_available else None,
-        "required_text_files": [
-            {"name": relative, "size_bytes": path.stat().st_size}
-            for _name, path, relative in required_text_paths
-            if path.is_file()
-        ],
+        "label_size_bytes": (
+            label_fingerprint["size_bytes"] if label_fingerprint is not None else None
+        ),
+        "required_text_files": required_text_files,
         "missing_inputs": sorted(missing_inputs),
     }
+    if label_fingerprint is not None and "sha256" in label_fingerprint:
+        identity["label_sha256"] = label_fingerprint["sha256"]
     checkpoint_path, _ = _checkpoint_path(checkpoint_dir, "results", identity)
     cached = _read_checkpoint(
         checkpoint_path, "lucas-direct-region-result/v1", identity
     )
     if cached is not None:
+        if label_signature is not None:
+            _require_input_file_signature(label_path, label_signature)
+        for path, signature in required_text_signatures:
+            _require_input_file_signature(path, signature)
         return cached, True, False
 
     key_fields = tuple(source["join_key_fields"])
@@ -781,6 +853,10 @@ def _direct_stream_result(
         "eligibility_decision_sha256": geometry["eligibility_decision_sha256"],
         "geometry_checkpoint_id": geometry_checkpoint_id,
     }
+    if label_signature is not None:
+        _require_input_file_signature(label_path, label_signature)
+    for path, signature in required_text_signatures:
+        _require_input_file_signature(path, signature)
     if eligible_pool_count_complete:
         _write_checkpoint(
             checkpoint_path,
@@ -796,7 +872,7 @@ def _direct_stream_result(
 
 
 def _sum_direct_region_results(
-    results: list[dict[str, Any]], *, shortfall_scope_complete: bool = True
+    results: list[dict[str, Any]], *, shortfall_scope_complete: bool = False
 ) -> dict[str, Any]:
     coverage = Counter()
     geometry = Counter()
@@ -872,7 +948,7 @@ def run_direct_source_pool_census(
     stream_names: list[str] | None = None,
     checkpoint_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Run a geometry-first census from exact-revision snapshots; never downloads."""
+    """Run a geometry-first census offline from configured-revision-shaped paths."""
     config = census._load_config(config_path)
     source = census._source_config(config, source_name)
     input_root = _validate_snapshot_root(
@@ -985,8 +1061,8 @@ def run_direct_source_pool_census(
         geometry_saved += int(checkpoint_path is not None and not reused)
         census._require_asset_signature(gpkg_path, asset_signature)
 
-    selected_region_scope_complete = set(selected_regions) == set(
-        config["scope"]["regions"]
+    selected_scope_complete = _complete_source_scope(
+        config, source, selected_regions, selected_streams
     )
     for stream_name, stream in zip(selected_streams, streams, strict=True):
         results = []
@@ -1020,9 +1096,7 @@ def run_direct_source_pool_census(
             results_saved += int(saved)
             census._require_asset_signature(gpkg_path, asset_signature)
         results_by_stream[stream_name] = results
-        summaries[stream_name] = _sum_direct_region_results(
-            results, shortfall_scope_complete=selected_region_scope_complete
-        )
+        summaries[stream_name] = _sum_direct_region_results(results)
     all_results = [
         result
         for stream_results in results_by_stream.values()
@@ -1030,7 +1104,7 @@ def run_direct_source_pool_census(
     ]
     return {
         "report_schema": "lucas-source-pool-census/v4",
-        "input_mode": "local-pinned-hf-cache-snapshots",
+        "input_mode": "local-configured-revision-cache-paths",
         "source_name": source_name,
         "source_id": source["source_id"],
         "source_display_label": source.get("display_label", source_name),
@@ -1039,9 +1113,7 @@ def run_direct_source_pool_census(
             "regions": selected_regions,
             "configured_region_count": len(config["scope"]["regions"]),
             "selected_streams": selected_streams,
-            "scope_complete": len(selected_regions) == len(config["scope"]["regions"])
-            and set(selected_streams)
-            == {stream["name"] for stream in source["streams"]},
+            "scope_complete": selected_scope_complete,
         },
         "method": census.method_report(config),
         "source_pins": {
@@ -1065,7 +1137,7 @@ def run_direct_source_pool_census(
                 "repository": source["label_repository"],
                 "revision": source["label_revision"],
             },
-            "network_access": "none; the adapter reads only existing local snapshots",
+            "network_access": "none; the adapter reads only supplied local directories",
         },
         "checkpointing": {
             "enabled": checkpoint_dir is not None,
@@ -1103,8 +1175,6 @@ def run_direct_source_pool_census(
         "stream_results": results_by_stream,
         "aggregate_across_selected_streams": _sum_direct_region_results(
             all_results,
-            shortfall_scope_complete=selected_region_scope_complete
-            and set(selected_streams)
-            == {stream["name"] for stream in source["streams"]},
+            shortfall_scope_complete=selected_scope_complete,
         ),
     }

@@ -13,6 +13,7 @@
 !/docs/
 !/src/
 !/tests/
+!/scripts/
 !/.github/
 
 # Local environments, generated files, source data, and scratch work.

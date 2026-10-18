@@ -27,13 +27,15 @@ with 4 eligible `yes` and 1 eligible `no` sentence instances. Its checkpoint
 driver is git-ignored, so the Europe aggregate has not passed tracked-run
 reproduction. `tools/lucas_source_pool_census.py` now supports the 110-region
 scope for Description, Website, and Wikidata/Wikipedia source data. It can read
-either Atlas outputs or exact-revision Hugging Face snapshots already present
-in the local Hub cache. Direct mode does not download files, read sentence
-text, or require Atlas. The spatial census has not been run from those
+either Atlas outputs or local directories shaped like HF cache paths, with
+repository and revision components matching the configuration. This path check
+does not verify HF cache metadata or authenticate file bytes against a trusted
+Hub commit manifest. Direct mode does not download files, read sentence text,
+or require Atlas. The spatial census has not been run from those
 snapshots; see `docs/quality/sentence-evaluation-readiness.md` for the open
 reproduction gate and manifest counts.
 
-Install the bounded-census dependencies with `uv sync --extra census`. Before
+Install the bounded-census dependencies with `uv sync --group census`. Before
 spatial processing, each runner streams the pinned LUCAS GeoPackage through
 SHA-256 and checks its digest and byte size against
 `config/lucas-2022-source.json`. Each spatial receipt records that both checks
@@ -47,21 +49,23 @@ census preserves that split and joins each stream by `sentence_id`.
 
 ### Direct source snapshots
 
-Direct mode accepts `--source-snapshot` and `--label-snapshot` paths that end
-at `datasets--OWNER--REPO/snapshots/<configured-revision>` in the existing HF
-Hub cache. It validates both repository names and 40-character revisions
-against `config/lucas-source-pools.json`; it never calls the Hub or downloads
-missing files. Select only needed source Parquet columns: Description keys and
+Direct mode accepts `--source-snapshot` and `--label-snapshot` directories with
+the HF cache layout `datasets--OWNER--REPO/snapshots/<configured-revision>`.
+It checks that the path components match the repository and revision configured
+in `config/lucas-source-pools.json`. This checks the path shape only; it does
+not verify HF cache metadata or authenticate file bytes against a trusted Hub
+commit manifest. The adapter never calls the Hub or downloads missing files.
+Select only needed source Parquet columns: Description keys and
 `sentence_count`, Website polygon IDs and sentence counts, Wiki sentence and
 document IDs, geometry, and source-label join fields. The sentence arrays and
 text columns are never requested. Wiki joins through document-to-polygon
 links, and Description polygons use stable `osm:<type>/<id>` keys.
 
-For example, with the two exact snapshots already cached, run one small
-partition with:
+For example, with both configured revision paths already present locally, run
+one small partition with:
 
 ```sh
-uv run --locked --extra census python tools/lucas_source_pool_census.py \
+uv run --locked --group census python tools/lucas_source_pool_census.py \
   --source Description \
   --source-snapshot "$HF_HUB_CACHE/datasets--NoeFlandre--osm-polygon-description-tag/snapshots/b4706eb315c66a8a57135289e7612dca8e03caf8" \
   --label-snapshot "$HF_HUB_CACHE/datasets--NoeFlandre--osm-polygon-description-tag-landuse/snapshots/ce98b328f3c6543800a3d931877b51eb3f0cf768" \
@@ -69,17 +73,24 @@ uv run --locked --extra census python tools/lucas_source_pool_census.py \
   --region albania --output data/quality/description-albania.json
 ```
 
-The direct report records snapshot pins, relative file paths, row counts,
-runtime versions, and deterministic eligibility/decision digests. It contains
-no source sentence text. No direct snapshot census has been run for this PR.
+The direct report records configured repository/revision pins, relative file
+paths, row counts, runtime versions, and deterministic eligibility/decision
+digests. These pins describe the expected cache path; they do not establish
+that its bytes match the Hub revision. When checkpointing is enabled, the
+adapter hashes the input files and includes those SHA-256 values in checkpoint
+identities, which detects later local changes but does not verify Hub
+provenance. The report contains no source sentence text. No direct snapshot
+census has been run for this PR.
 For long runs, pass `--checkpoint-dir` to save atomic per-region geometry and
 join results outside both HF snapshot roots. Checkpoints are keyed by the pinned
-inputs, LUCAS asset signature, census and coverage-module hashes, package export
-hash, and Python-library plus GEOS/PROJ data versions, so implementation or
-environment changes trigger a fresh calculation.
-Partial-region runs report
-`shortfall_from_target: null`; a numeric shortfall is reported only when all
-configured regions are selected and the eligible pool counts are complete.
+inputs' content SHA-256 digests, LUCAS asset signature, census and
+coverage-module hashes, package export hash, and Python-library plus GEOS/PROJ
+data versions, so input, implementation, or environment changes trigger a fresh
+calculation. Snapshot files are hashed when checkpointing is enabled; large
+cached files therefore incur a sequential read even when the computed result is
+reused. Stream summaries do not report the source cohort's 500/500 shortfall.
+Only the aggregate reports a numeric shortfall, and only when every configured
+region and stream is selected and the eligible pool counts are complete.
 
 The source-label decision and the reference-coverage decision are separate.
 The 500/500 split uses existing source-side relevance labels; it does not use
@@ -174,9 +185,21 @@ but deferred. The `all` sample is drawn independently from reference labels;
 reference-code strata use only eligible LUCAS polygons. No binary LUCAS `yes` or
 `no` stratum is defined by this rule.
 
-Do not start inference or request Grid5000 compute until all nine eligible
-`yes`/`no` counts, pinned manifests, and policy preflight are complete. Run the
-Grid5000 policy check on a frontend before any allocation request. The prior
-Wiki-only throughput measurement is a planning estimate, not evidence for
-these cohorts. No compute allocation or external outreach is authorized by
-this plan.
+A bounded CPU counts-only census may run before all nine eligible pools are
+measured when the task explicitly authorizes it, its inputs and code are pinned,
+and live policy, duplicate-job, capacity, and storage checks pass before the
+allocation. It must not sample or run inference. A single-source run does not
+clear the nine-cohort gate.
+
+This nine-cohort gate applies to the sentence cohorts in this document. The
+separate LUCAS point cohorts have their own limited authorization and gates in
+`sentence-evaluation-readiness.md`; that authorization does not apply to these
+sentence cohorts or authorize new compute allocations or inference here.
+
+The bounded CPU counts-only census is the only pre-gate compute exception. It
+requires explicit authorization and the live allocation checks above. For the
+sentence cohorts in this document, do not sample or run inference, or request
+compute for those operations, until all nine eligible `yes`/`no` counts and
+pinned manifests are complete. The prior Wiki-only throughput measurement is a
+planning estimate, not evidence for these cohorts. This plan does not authorize
+inference allocations or external outreach.
