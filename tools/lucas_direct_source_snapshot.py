@@ -22,7 +22,7 @@ from tools import lucas_source_pool_census as census
 
 
 def _validate_snapshot_root(path: Path, repository: str, revision: str) -> Path:
-    """Require an exact HF Hub cache snapshot; this reader never downloads."""
+    """Require the expected local cache path for the pinned revision; never download."""
     root = path.expanduser()
     cache_name = f"datasets--{repository.replace('/', '--')}"
     if (

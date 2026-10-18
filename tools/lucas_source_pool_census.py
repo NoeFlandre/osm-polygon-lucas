@@ -293,7 +293,7 @@ def count_eligible_source_sentences(
     polygon_ids: set[str],
     expected_input_revision: str,
 ) -> dict[str, Any]:
-    """Join only source label keys linked to eligible polygons, in bounded memory."""
+    """Read batches, retaining per-key join and coverage state in memory."""
     if not key_fields:
         raise ValueError("source sentence join key cannot be empty")
     read_text_units = _text_unit_row_factory(text_units)

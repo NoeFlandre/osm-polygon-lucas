@@ -6,6 +6,14 @@ The mutation job compares every surviving mutant ID against this table. An undoc
 
 | Mutant ID | Reason |
 | --- | --- |
+| `tools.lucas_point_census_domain.x_sample_combined_wiki_cohort__mutmut_3` | The mutation only changes the wording of the empty-stream `ValueError`; the same input still fails at the same boundary, and exact diagnostic wording is not a public contract. |
+| `tools.lucas_point_census_domain.x_sample_combined_wiki_cohort__mutmut_4` | The mutation only changes capitalization in the empty-stream `ValueError`; the same input still fails at the same boundary, and exact diagnostic capitalization is not a public contract. |
+| `tools.lucas_point_census_domain.x__merge_existing_wiki_stream_row__mutmut_7` | The mutation only changes the conflicting-label `ValueError` wording; label conflicts still fail at the same boundary, and exact diagnostic wording is not a public contract. |
+| `tools.lucas_point_census_domain.x__merge_existing_wiki_stream_row__mutmut_8` | The mutation only changes capitalization in the conflicting-label `ValueError`; label conflicts still fail at the same boundary, and exact diagnostic capitalization is not a public contract. |
+| `tools.lucas_point_census_domain.x__merge_wiki_stream_row__mutmut_9` | The metadata mapping is keyed by the canonical sentence ID, and the annotator reads the natural key, region, and provenance from its value; the value's redundant `sentence_id` is never read. |
+| `tools.lucas_point_census_domain.x__merge_wiki_stream_row__mutmut_10` | The metadata mapping is keyed by the canonical sentence ID, and the annotator reads the natural key, region, and provenance from its value; the value's redundant `sentence_id` is never read. |
+| `tools.lucas_point_census_domain.x__merge_wiki_stream_row__mutmut_11` | The original row already supplies the consumed `polygon_ids` field; this mutation only adds an unused misspelled alias to the metadata dictionary. |
+| `tools.lucas_point_census_domain.x__merge_wiki_stream_row__mutmut_12` | The original row already supplies the consumed `polygon_ids` field; this mutation only adds an unused uppercase alias to the metadata dictionary. |
 | `osm_polygon_lucas.cli.x__report_text__mutmut_30` | `None` and `False` are both falsey. `json.dumps` rejects non-finite numbers in either case. |
 | `osm_polygon_lucas.cli.x__read_osm_wkt__mutmut_10` | Python resolves `UTF-8` and `utf-8` to the same codec. |
 | `osm_polygon_lucas.cli.x__source_manifest__mutmut_11` | Python resolves `UTF-8` and `utf-8` to the same codec. |

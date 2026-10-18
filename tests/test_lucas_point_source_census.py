@@ -22,6 +22,7 @@ from osm_polygon_lucas.point_coverage import (
     PointPolygonStatus,
 )
 from tools import lucas_direct_source_snapshot as direct_snapshot
+from tools import lucas_point_census_domain as census_domain
 from tools import lucas_point_source_census as point_runner
 from tools import lucas_source_pool_census as pool_census
 from tools.lucas_point_census_domain import (
@@ -1240,6 +1241,29 @@ def test_candidate_stage_samples_wiki_streams_as_one_cohort(
     assert combined["target_per_label"] == 3
     assert combined["h3_resolution"] == 7
     assert combined["max_per_cell"] == 4
+    assert combined["source_name"] == "Wikidata"
+    assert [call[1] for call in partition_calls] == [
+        "point-index-digest",
+        "point-index-digest",
+    ]
+
+    context.scope.source["direct_input"]["schema"] = "website-polygons-v1"
+    stage = point_runner._run_candidate_stage(
+        cast(point_runner._RunContext, context),
+        cast(point_runner._PointStage, point_stage),
+        tmp_path / "lucas.gpkg",
+    )
+
+    assert stage.saved == 4
+    assert stage.reused == 6
+    assert set(stage.cohorts) == {"wikipedia", "wikivoyage"}
+    assert len(sample_calls) == 2
+    for sample in sample_calls:
+        assert sample["source_name"] == "Wikidata"
+        assert sample["seed"] == 17
+        assert sample["target_per_label"] == 3
+        assert sample["h3_resolution"] == 7
+        assert sample["max_per_cell"] == 4
 
 
 def test_load_source_scope_preserves_snapshot_guards_and_stream_filter(
@@ -1908,7 +1932,8 @@ def test_combined_wiki_sample_shares_quota_and_cell_cap_across_streams():
     def partition(stream: str, prefix: str) -> dict:
         candidates = []
         for relevance in ("yes", "no"):
-            for index, polygon_id in enumerate(("osm:way/1", "osm:way/2")):
+            for index in range(6):
+                polygon_id = f"osm:way/{index % 2 + 1}"
                 key = f"{prefix}-{relevance}-{index}"
                 candidates.append(
                     {
@@ -1940,9 +1965,9 @@ def test_combined_wiki_sample_shares_quota_and_cell_cap_across_streams():
         "source": source,
         "partition_results_by_stream": partitions,
         "point_index": anchors,
-        "target_per_label": 2,
+        "target_per_label": 6,
         "seed": 42,
-        "h3_resolution": 3,
+        "h3_resolution": 7,
         "max_per_cell": 2,
     }
 
@@ -1953,17 +1978,25 @@ def test_combined_wiki_sample_shares_quota_and_cell_cap_across_streams():
         source=source,
         partition_results_by_stream=dict(reversed(partitions.items())),
         point_index=anchors,
-        target_per_label=2,
+        target_per_label=6,
         seed=42,
-        h3_resolution=3,
+        h3_resolution=7,
         max_per_cell=2,
     )
 
-    assert first["sample"]["selected_by_label"] == {"yes": 2, "no": 2}
-    assert first["sample"]["eligible_by_label"] == {"yes": 4, "no": 4}
-    cells = Counter(row["cell"] for row in first["selected"])
-    assert len(cells) == 2
-    assert set(cells.values()) == {2}
+    assert first["sample"]["source"] == "wiki/combined"
+    assert first["sample"]["seed"] == 42
+    assert first["sample"]["target_per_label"] == 6
+    assert first["sample"]["h3_resolution"] == 7
+    assert first["sample"]["max_per_cell"] == 2
+    assert first["sample"]["selected_by_label"] == {"yes": 4, "no": 4}
+    assert first["sample"]["eligible_by_label"] == {"yes": 6, "no": 6}
+    for relevance in ("yes", "no"):
+        cells = Counter(
+            row["cell"] for row in first["selected"] if row["relevance"] == relevance
+        )
+        assert len(cells) == 2
+        assert set(cells.values()) == {2}
     assert first["selected_manifest"] == second["selected_manifest"]
     assert first["selected_manifest"] == reversed_streams["selected_manifest"]
     assert {row["origin_streams"][0] for row in first["selected"]} <= {
@@ -2000,45 +2033,40 @@ def test_combined_wiki_sample_coalesces_cross_stream_sentence_keys():
         "direct_input": {"schema": "wiki-document-sentences-v1"},
         "join_key_fields": ["sentence_id"],
     }
-    base_partition = {
-        "region": "austria",
-        "text_unit_rows_scanned": 1,
-        "duplicate_validation_rows": 1,
-        "source_label_rows": {"yes": 1},
-        "joined_to_point_eligible_polygons": {"yes": 1},
-        "not_joined_to_point_eligible_polygons": {"yes": 0},
-        "point_eligible_sentence_instances": 1,
-    }
+
+    def partition(stream: str, key: str, polygon_id: str, region: str) -> dict:
+        return {
+            "region": region,
+            "stream": stream,
+            "text_unit_rows_scanned": 1,
+            "duplicate_validation_rows": 1,
+            "source_label_rows": {"yes": 1},
+            "joined_to_point_eligible_polygons": {"yes": 1},
+            "not_joined_to_point_eligible_polygons": {"yes": 0},
+            "point_eligible_sentence_instances": 1,
+            "candidates": [
+                {
+                    "sentence_id": f"{stream}-{key}",
+                    "sentence_key": [key],
+                    "status": "yes",
+                    "polygon_ids": [polygon_id],
+                    "origin_region": region,
+                }
+            ],
+        }
+
     partitions = {
         "wikipedia": [
-            {
-                **base_partition,
-                "stream": "wikipedia",
-                "candidates": [
-                    {
-                        "sentence_id": "wikipedia-shared",
-                        "sentence_key": ["shared"],
-                        "status": "yes",
-                        "polygon_ids": ["osm:way/2"],
-                        "origin_region": "zambia",
-                    }
-                ],
-            }
+            partition("wikipedia", "shared-1", "osm:way/2", "zambia"),
+            partition("wikipedia", "shared-2", "osm:way/3", "austria"),
+            partition("wikipedia", "shared-1", "osm:way/3", "belgium"),
+            partition("wikipedia", "shared-2", "osm:way/2", "zambia"),
         ],
         "wikivoyage": [
-            {
-                **base_partition,
-                "stream": "wikivoyage",
-                "candidates": [
-                    {
-                        "sentence_id": "wikivoyage-shared",
-                        "sentence_key": ["shared"],
-                        "status": "yes",
-                        "polygon_ids": ["osm:way/1"],
-                        "origin_region": "albania",
-                    }
-                ],
-            }
+            partition("wikivoyage", "shared-1", "osm:way/1", "albania"),
+            partition("wikivoyage", "shared-2", "osm:way/4", "france"),
+            partition("wikivoyage", "shared-1", "osm:way/4", "belgium"),
+            partition("wikivoyage", "shared-2", "osm:way/1", "albania"),
         ],
     }
 
@@ -2046,21 +2074,60 @@ def test_combined_wiki_sample_coalesces_cross_stream_sentence_keys():
         source_name="Wikidata",
         source=source,
         partition_results_by_stream=partitions,
-        point_index=_PointIndex({"osm:way/1": (12.5, 45.5), "osm:way/2": (-2.5, 40.5)}),
-        target_per_label=1,
+        point_index=_PointIndex({"osm:way/1": (12.5, 45.5), "osm:way/4": (-2.5, 40.5)}),
+        target_per_label=2,
         seed=42,
-        h3_resolution=3,
+        h3_resolution=7,
         max_per_cell=2,
     )
 
-    assert cohort["repeated_cross_stream_sentence_rows_coalesced"] == 1
-    assert cohort["point_eligible_sentence_instances_by_status"] == {"yes": 1}
-    assert cohort["selected"][0]["natural_key"] == {"sentence_id": "shared"}
-    assert cohort["selected"][0]["origin_region"] == "albania"
-    assert cohort["selected"][0]["origin_streams"] == [
-        "wikipedia",
-        "wikivoyage",
-    ]
+    expected_ids = {
+        json.dumps(["wiki", [key]], separators=(",", ":"))
+        for key in ("shared-1", "shared-2")
+    }
+    selected_by_key = {
+        row["natural_key"]["sentence_id"]: row for row in cohort["selected"]
+    }
+    assert cohort["stream"] == "combined"
+    assert cohort["sample"]["source"] == "wiki/combined"
+    assert cohort["selected"][0]["sentence_id"] in expected_ids
+    assert {row["sentence_id"] for row in cohort["selected"]} == expected_ids
+    assert {key: row["anchor_polygon_id"] for key, row in selected_by_key.items()} == {
+        "shared-1": "osm:way/1",
+        "shared-2": "osm:way/4",
+    }
+    assert cohort["repeated_partition_sentence_rows_coalesced"] == 4
+    assert cohort["repeated_cross_stream_sentence_rows_coalesced"] == 2
+    assert cohort["point_eligible_sentence_instances_by_status"] == {"yes": 2}
+    assert [
+        (
+            stream["stream"],
+            stream["point_eligible_sentence_instances_by_status"],
+            stream["repeated_partition_sentence_rows_coalesced"],
+        )
+        for stream in cohort["streams"]
+    ] == [("wikipedia", {"yes": 2}, 2), ("wikivoyage", {"yes": 2}, 2)]
+    assert cohort["selected"][0]["origin_streams"] == ["wikipedia", "wikivoyage"]
+    assert all(
+        row["origin_streams"] == ["wikipedia", "wikivoyage"]
+        for row in cohort["selected"]
+    )
+    assert cohort["selected_manifest"]["key_fields"] == ["sentence_id"]
+
+
+def test_combined_wiki_annotation_rejects_join_key_shape_mismatch():
+    with pytest.raises(ValueError):
+        census_domain._annotate_combined_wiki_selection(
+            [{"sentence_id": "candidate"}],
+            {
+                "candidate": {
+                    "sentence_key": ["one"],
+                    "origin_region": "albania",
+                    "origin_streams": set(),
+                }
+            },
+            {"join_key_fields": ["first", "second"]},
+        )
 
 
 def test_combined_wiki_sample_rejects_cross_stream_label_conflicts():
